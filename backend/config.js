@@ -3,7 +3,7 @@
 // ==========================================
 // ENVIRONMENT TOGGLE
 // Options: 'Exp' (Experimental) | 'Dev' (Development) | 'Prod' (Production)
-const ENV = 'Dev';
+const ENV = 'Prod';
 
 // PROD EXPIRY SCANNER TOGGLE (applies when ENV === 'Prod')
 // Options: 'offline' (Scan Offline button) | 'ai' (Scan using AI button)

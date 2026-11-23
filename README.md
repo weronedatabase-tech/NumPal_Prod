@@ -52,8 +52,9 @@ Go to your GitHub repository **Settings > Secrets and variables > Actions** and 
 
 Future commits to the `main` branch that modify files in the `backend/` directory will now trigger the workflow, dynamically create the `.clasp.json` configuration on the server, push the code, and publish a new version without changing your Web App URL.
 
-**Part 4: Configure Gemini API Key in Google Apps Script (for GitHub Pages AI Scan)**
+**Part 4: Configure Paid-Tier Gemini API Key in Google Apps Script (for GitHub Pages AI Scan)**
 1. Open your Google Apps Script project > **Project Settings** (gear icon) > **Script Properties** > **Add script property**.
-2. Add property `GEMINI_API_KEY` with your Gemini API key (and optionally `GEMINI_FLASH_MODEL` if you want to override the default model).
-3. In the Apps Script editor, run `doGet` once (or re-authorize your Web App deployment) if prompted to grant external URL fetch permission (`UrlFetchApp`).
-4. Verify by opening your Apps Script `/exec` URL in a browser — it should return `{"ok":true,...,"configured":true}`.
+2. Add property `GEMINI_API_KEY` with your billing-enabled (Pay-as-you-go) Gemini API key to lift free-tier daily limits.
+3. *(Optional)* Add `GEMINI_FLASH_MODEL` (default: `gemini-4-hydrogen`) or `GEMINI_FALLBACK_MODEL` (default: `gemini-3.1-flash-lite`) to customize models.
+4. In the Apps Script editor, run `doGet` once (or re-authorize your Web App deployment) if prompted to grant external URL fetch permission (`UrlFetchApp`).
+5. Verify by opening your Apps Script `/exec` URL in a browser — it should return `{"ok":true,...,"configured":true}`.

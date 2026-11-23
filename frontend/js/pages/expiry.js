@@ -34,7 +34,6 @@ const badDetectedDateEl = document.getElementById('bad-detected-date');
 const cameraModal = document.getElementById('camera-modal');
 const cameraVideo = document.getElementById('camera-video');
 const cameraGuideHint = document.getElementById('camera-guide-hint');
-const cameraGuideBox = document.getElementById('camera-guide-box');
 const cameraCloseBtn = document.getElementById('camera-close-btn');
 const cameraCaptureBtn = document.getElementById('camera-capture-btn');
 const cameraTorchBtn = document.getElementById('camera-torch-btn');
@@ -339,7 +338,7 @@ function updateViewfinderModeUI(mode) {
   if (cameraGuideHint) {
     cameraGuideHint.textContent = isAi
       ? 'AI Scan: Point camera at the expiry date'
-      : 'Line up the expiry date inside the box';
+      : 'Point camera at the expiry date';
   }
   if (cameraCaptureBtn) {
     cameraCaptureBtn.classList.toggle('ai-mode', isAi);
@@ -439,58 +438,18 @@ function captureFromViewfinder() {
   const vh = cameraVideo.videoHeight;
   const isAi = activeScanMode === 'ai';
 
-  let sx = 0;
-  let sy = 0;
-  let sw = vw;
-  let sh = vh;
-  let outW;
-  let outH;
-
-  if (isAi) {
-    // AI mode: capture the full camera frame without cropping to the small guide rectangle
-    const MAX_SIDE = 1280;
-    const maxDim = Math.max(vw, vh);
-    const outScale = maxDim > MAX_SIDE ? MAX_SIDE / maxDim : 1;
-    outW = Math.max(32, Math.round(vw * outScale));
-    outH = Math.max(32, Math.round(vh * outScale));
-  } else {
-    const vr = cameraVideo.getBoundingClientRect();
-    const gr = cameraGuideBox.getBoundingClientRect();
-
-    // Map guide box coordinates onto the underlying video frame accounting for object-fit: cover
-    const scale = Math.max(vr.width / vw, vr.height / vh);
-    const renderedW = vw * scale;
-    const renderedH = vh * scale;
-    const offsetX = (vr.width - renderedW) / 2;
-    const offsetY = (vr.height - renderedH) / 2;
-
-    const relX = gr.left - vr.left;
-    const relY = gr.top - vr.top;
-
-    sx = (relX - offsetX) / scale;
-    sy = (relY - offsetY) / scale;
-    sw = gr.width / scale;
-    sh = gr.height / scale;
-
-    const padX = sw * 0.14;
-    const padY = sh * 0.22;
-    sx = Math.max(0, sx - padX);
-    sy = Math.max(0, sy - padY);
-    sw = Math.min(vw - sx, sw + padX * 2);
-    sh = Math.min(vh - sy, sh + padY * 2);
-
-    // Scale captured crop cleanly
-    const MAX_WIDTH = 960;
-    const outScale = sw > MAX_WIDTH ? MAX_WIDTH / sw : 1;
-    outW = Math.max(32, Math.round(sw * outScale));
-    outH = Math.max(32, Math.round(sh * outScale));
-  }
+  // Capture the full camera frame without cropping to a rectangular guide window
+  const MAX_SIDE = isAi ? 1280 : 1024;
+  const maxDim = Math.max(vw, vh);
+  const outScale = maxDim > MAX_SIDE ? MAX_SIDE / maxDim : 1;
+  const outW = Math.max(32, Math.round(vw * outScale));
+  const outH = Math.max(32, Math.round(vh * outScale));
 
   const canvas = document.createElement('canvas');
   canvas.width = outW;
   canvas.height = outH;
   const ctx = canvas.getContext('2d', { willReadFrequently: !isAi });
-  ctx.drawImage(cameraVideo, sx, sy, sw, sh, 0, 0, outW, outH);
+  ctx.drawImage(cameraVideo, 0, 0, vw, vh, 0, 0, outW, outH);
 
   if (isAi) {
     const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
@@ -500,7 +459,7 @@ function captureFromViewfinder() {
   } else {
     const imageData = ctx.getImageData(0, 0, outW, outH);
     stopCamera();
-    processImagePixels(imageData.data, outW, outH, true);
+    processImagePixels(imageData.data, outW, outH, false);
   }
 }
 

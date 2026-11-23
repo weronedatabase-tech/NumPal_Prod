@@ -4,12 +4,14 @@
 // such as GitHub Pages (which cannot execute Node.js POST routes).
 //
 // Required Script Property (Apps Script > Project Settings > Script Properties):
-//   GEMINI_API_KEY      = Your Gemini API key
-// Optional Script Property:
-//   GEMINI_FLASH_MODEL  = Gemini model ID override (default: gemini-4-hydrogen)
+//   GEMINI_API_KEY         = Your billing-enabled (paid tier) Gemini API key
+// Optional Script Properties:
+//   GEMINI_FLASH_MODEL     = Primary Gemini model ID (default: gemini-4-hydrogen)
+//   GEMINI_FALLBACK_MODEL  = Fallback Gemini model ID on 429/503 (default: gemini-3.1-flash-lite)
 // ==========================================
 
 const DEFAULT_GEMINI_FLASH_MODEL = 'gemini-4-hydrogen';
+const DEFAULT_GEMINI_FALLBACK_MODEL = 'gemini-3.1-flash-lite';
 
 const ALLOWED_IMAGE_MIME_TYPES = {
   'image/jpeg': true,
@@ -33,7 +35,10 @@ function getScriptConfig() {
   const props = PropertiesService.getScriptProperties();
   const apiKey = String(props.getProperty('GEMINI_API_KEY') || '').trim();
   const model = String(props.getProperty('GEMINI_FLASH_MODEL') || DEFAULT_GEMINI_FLASH_MODEL).trim();
-  return { apiKey, model };
+  const fallbackModel = String(
+    props.getProperty('GEMINI_FALLBACK_MODEL') || DEFAULT_GEMINI_FALLBACK_MODEL
+  ).trim();
+  return { apiKey, model, fallbackModel };
 }
 
 function isRetryableStatus(statusCode) {
@@ -91,6 +96,7 @@ function doGet() {
     ok: true,
     service: 'NumPal Expiry AI Scanner',
     model: cfg.model,
+    fallbackModel: cfg.fallbackModel || null,
     configured: Boolean(cfg.apiKey)
   });
 }
@@ -173,73 +179,87 @@ function doPost(e) {
       refYear +
       '. Return structured JSON only.';
 
-    const generationConfig = {
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: 'OBJECT',
-        properties: {
-          foundDate: {
-            type: 'BOOLEAN',
-            description: 'True if an expiration / best-before / use-by date is clearly legible.'
+    function buildRequestPayload(modelName) {
+      const generationConfig = {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: 'OBJECT',
+          properties: {
+            foundDate: {
+              type: 'BOOLEAN',
+              description: 'True if an expiration / best-before / use-by date is clearly legible.'
+            },
+            year: {
+              type: 'INTEGER',
+              description: '4-digit year (e.g. 2026) or 0 if not found.'
+            },
+            month: {
+              type: 'INTEGER',
+              description: 'Month number 1-12 or 0 if not found.'
+            },
+            day: {
+              type: 'INTEGER',
+              description: 'Day of month 1-31, or 0 if only month & year are printed or not found.'
+            },
+            isMonthOnly: {
+              type: 'BOOLEAN',
+              description: 'True if only month and year are printed without a day.'
+            },
+            matchedText: {
+              type: 'STRING',
+              description: 'Exact date string read from the image.'
+            },
+            reason: {
+              type: 'STRING',
+              description: 'Short status: ok, no_date, only_mfg_found, or illegible.'
+            }
           },
-          year: {
-            type: 'INTEGER',
-            description: '4-digit year (e.g. 2026) or 0 if not found.'
-          },
-          month: {
-            type: 'INTEGER',
-            description: 'Month number 1-12 or 0 if not found.'
-          },
-          day: {
-            type: 'INTEGER',
-            description: 'Day of month 1-31, or 0 if only month & year are printed or not found.'
-          },
-          isMonthOnly: {
-            type: 'BOOLEAN',
-            description: 'True if only month and year are printed without a day.'
-          },
-          matchedText: {
-            type: 'STRING',
-            description: 'Exact date string read from the image.'
-          },
-          reason: {
-            type: 'STRING',
-            description: 'Short status: ok, no_date, only_mfg_found, or illegible.'
-          }
-        },
-        required: ['foundDate', 'year', 'month', 'day', 'isMonthOnly', 'matchedText', 'reason']
-      }
-    };
+          required: ['foundDate', 'year', 'month', 'day', 'isMonthOnly', 'matchedText', 'reason']
+        }
+      };
 
-    if (/^gemini-[34]/.test(cfg.model)) {
-      generationConfig.thinkingConfig = { thinkingLevel: 'LOW' };
+      if (/^gemini-[34]/.test(modelName) && !/flash-lite/i.test(modelName)) {
+        generationConfig.thinkingConfig = { thinkingLevel: 'LOW' };
+      }
+
+      return {
+        systemInstruction: {
+          parts: [{ text: systemInstruction }]
+        },
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                inlineData: {
+                  mimeType: mimeType,
+                  data: rawBase64
+                }
+              },
+              {
+                text: promptText
+              }
+            ]
+          }
+        ],
+        generationConfig: generationConfig
+      };
     }
 
-    const requestPayload = {
-      systemInstruction: {
-        parts: [{ text: systemInstruction }]
-      },
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            {
-              inlineData: {
-                mimeType: mimeType,
-                data: rawBase64
-              }
-            },
-            {
-              text: promptText
-            }
-          ]
-        }
-      ],
-      generationConfig: generationConfig
-    };
+    let usedModel = cfg.model;
+    let apiResponse = callGeminiWithRetry(usedModel, cfg.apiKey, buildRequestPayload(usedModel), 2);
+    let statusCode = apiResponse.getResponseCode();
 
-    const apiResponse = callGeminiWithRetry(cfg.model, cfg.apiKey, requestPayload, 2);
-    const statusCode = apiResponse.getResponseCode();
+    if (
+      (statusCode === 429 || statusCode === 503) &&
+      cfg.fallbackModel &&
+      cfg.fallbackModel !== usedModel
+    ) {
+      usedModel = cfg.fallbackModel;
+      apiResponse = callGeminiWithRetry(usedModel, cfg.apiKey, buildRequestPayload(usedModel), 1);
+      statusCode = apiResponse.getResponseCode();
+    }
+
     const resText = apiResponse.getContentText() || '';
 
     if (statusCode < 200 || statusCode >= 300) {
@@ -261,14 +281,14 @@ function doPost(e) {
       if (statusCode === 429 || /RESOURCE_EXHAUSTED/i.test(upstreamMsg)) {
         return jsonOutput({
           ok: false,
-          error: 'AI scan rate limit reached. Please wait a moment or use Scan Offline.',
+          error: 'AI scan quota reached. Check billing on your GEMINI_API_KEY project, or use Scan Offline.',
           upstreamStatus: statusCode
         });
       }
       if (statusCode === 404 || /NOT_FOUND/i.test(upstreamMsg)) {
         return jsonOutput({
           ok: false,
-          error: 'Configured Gemini model (' + cfg.model + ') was not found. Update GEMINI_FLASH_MODEL in Script Properties.',
+          error: 'Configured Gemini model (' + usedModel + ') was not found. Update GEMINI_FLASH_MODEL in Script Properties.',
           upstreamStatus: statusCode
         });
       }
@@ -318,7 +338,7 @@ function doPost(e) {
         foundDate: false,
         reason: (parsed && parsed.reason) || 'no_date',
         matchedText: (parsed && parsed.matchedText) || '',
-        model: cfg.model,
+        model: usedModel,
         durationMs: durationMs
       });
     }
@@ -341,7 +361,7 @@ function doPost(e) {
         foundDate: false,
         reason: 'invalid_date',
         matchedText: String(parsed.matchedText || ''),
-        model: cfg.model,
+        model: usedModel,
         durationMs: durationMs
       });
     }
@@ -354,7 +374,7 @@ function doPost(e) {
         foundDate: false,
         reason: 'invalid_day',
         matchedText: String(parsed.matchedText || ''),
-        model: cfg.model,
+        model: usedModel,
         durationMs: durationMs
       });
     }
@@ -367,7 +387,7 @@ function doPost(e) {
       isMonthOnly: isMonthOnly,
       matchedText: String(parsed.matchedText || ''),
       reason: 'ok',
-      model: cfg.model,
+      model: usedModel,
       durationMs: durationMs
     });
   } catch (error) {

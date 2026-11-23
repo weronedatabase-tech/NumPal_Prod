@@ -9,8 +9,10 @@ const PORT = Number(process.env.PORT) || 3000;
 const HOST = '0.0.0.0';
 const ROOT_DIR = __dirname;
 
-// Active free-tier Gemini Flash model (overrideable via GEMINI_FLASH_MODEL env var without code changes)
+// Primary Gemini Flash model for paid/standard tier (overrideable via GEMINI_FLASH_MODEL env var)
 const GEMINI_FLASH_MODEL = (process.env.GEMINI_FLASH_MODEL || 'gemini-4-hydrogen').trim();
+// Fallback Gemini model when primary model encounters 429/503 (overrideable via GEMINI_FALLBACK_MODEL)
+const GEMINI_FALLBACK_MODEL = (process.env.GEMINI_FALLBACK_MODEL || 'gemini-3.1-flash-lite').trim();
 
 const ALLOWED_IMAGE_MIME_TYPES = new Set([
   'image/jpeg',
@@ -80,6 +82,27 @@ function isRetryableGeminiError(err) {
   return /ECONNRESET|ETIMEDOUT|ENOTFOUND|network|unavailable|503|500/i.test(msg);
 }
 
+function isFallbackEligibleError(err) {
+  const status = err && (err.status || err.statusCode || (err.error && err.error.code));
+  if (status === 429 || status === 503) {
+    return true;
+  }
+  const msg = String((err && err.message) || '');
+  return /RESOURCE_EXHAUSTED|UNAVAILABLE|503|429/i.test(msg);
+}
+
+function buildGeminiConfig(model, systemInstruction, responseSchema) {
+  const config = {
+    systemInstruction,
+    responseMimeType: 'application/json',
+    responseSchema
+  };
+  if (/^gemini-[34]/.test(model) && !/flash-lite/i.test(model)) {
+    config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+  }
+  return config;
+}
+
 async function generateWithRetry(ai, params, maxRetries = 2) {
   let lastError;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
@@ -125,6 +148,18 @@ function readStaticVersionMetadata() {
 }
 
 app.use(express.json({ limit: '10mb' }));
+
+// Health check for server-side Gemini expiry scanner configuration
+app.get('/api/scan-expiry/status', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    ok: true,
+    service: 'NumPal Expiry AI Scanner',
+    model: GEMINI_FLASH_MODEL,
+    fallbackModel: GEMINI_FALLBACK_MODEL || null,
+    configured: Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim())
+  });
+});
 
 // Server-side Gemini Flash expiry date scanning endpoint
 app.post('/api/scan-expiry', async (req, res) => {
@@ -184,64 +219,84 @@ app.post('/api/scan-expiry', async (req, res) => {
 
   const promptText = `Inspect this product image and extract the expiration date. Today's reference year is ${refYear}. Return structured JSON only.`;
 
-  try {
-    const response = await generateWithRetry(ai, {
-      model: GEMINI_FLASH_MODEL,
-      contents: {
-        parts: [
-          {
-            inlineData: {
-              mimeType,
-              data: rawBase64
-            }
-          },
-          {
-            text: promptText
-          }
-        ]
+  const responseSchema = {
+    type: Type.OBJECT,
+    properties: {
+      foundDate: {
+        type: Type.BOOLEAN,
+        description: 'True if an expiration / best-before / use-by date is clearly legible.'
       },
-      config: {
-        systemInstruction,
-        ...(/^gemini-[34]/.test(GEMINI_FLASH_MODEL)
-          ? { thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } }
-          : {}),
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            foundDate: {
-              type: Type.BOOLEAN,
-              description: 'True if an expiration / best-before / use-by date is clearly legible.'
-            },
-            year: {
-              type: Type.INTEGER,
-              description: '4-digit year (e.g. 2026) or 0 if not found.'
-            },
-            month: {
-              type: Type.INTEGER,
-              description: 'Month number 1-12 or 0 if not found.'
-            },
-            day: {
-              type: Type.INTEGER,
-              description: 'Day of month 1-31, or 0 if only month & year are printed or not found.'
-            },
-            isMonthOnly: {
-              type: Type.BOOLEAN,
-              description: 'True if only month and year are printed without a day.'
-            },
-            matchedText: {
-              type: Type.STRING,
-              description: 'Exact date string read from the image.'
-            },
-            reason: {
-              type: Type.STRING,
-              description: 'Short status: ok, no_date, only_mfg_found, or illegible.'
-            }
-          },
-          required: ['foundDate', 'year', 'month', 'day', 'isMonthOnly', 'matchedText', 'reason']
-        }
+      year: {
+        type: Type.INTEGER,
+        description: '4-digit year (e.g. 2026) or 0 if not found.'
+      },
+      month: {
+        type: Type.INTEGER,
+        description: 'Month number 1-12 or 0 if not found.'
+      },
+      day: {
+        type: Type.INTEGER,
+        description: 'Day of month 1-31, or 0 if only month & year are printed or not found.'
+      },
+      isMonthOnly: {
+        type: Type.BOOLEAN,
+        description: 'True if only month and year are printed without a day.'
+      },
+      matchedText: {
+        type: Type.STRING,
+        description: 'Exact date string read from the image.'
+      },
+      reason: {
+        type: Type.STRING,
+        description: 'Short status: ok, no_date, only_mfg_found, or illegible.'
       }
-    });
+    },
+    required: ['foundDate', 'year', 'month', 'day', 'isMonthOnly', 'matchedText', 'reason']
+  };
+
+  const contents = {
+    parts: [
+      {
+        inlineData: {
+          mimeType,
+          data: rawBase64
+        }
+      },
+      {
+        text: promptText
+      }
+    ]
+  };
+
+  try {
+    let usedModel = GEMINI_FLASH_MODEL;
+    let response;
+    try {
+      response = await generateWithRetry(ai, {
+        model: GEMINI_FLASH_MODEL,
+        contents,
+        config: buildGeminiConfig(GEMINI_FLASH_MODEL, systemInstruction, responseSchema)
+      });
+    } catch (primaryErr) {
+      if (
+        GEMINI_FALLBACK_MODEL &&
+        GEMINI_FALLBACK_MODEL !== GEMINI_FLASH_MODEL &&
+        isFallbackEligibleError(primaryErr)
+      ) {
+        usedModel = GEMINI_FALLBACK_MODEL;
+        response = await generateWithRetry(
+          ai,
+          {
+            model: GEMINI_FALLBACK_MODEL,
+            contents,
+            config: buildGeminiConfig(GEMINI_FALLBACK_MODEL, systemInstruction, responseSchema)
+          },
+          1
+        );
+      } else {
+        throw primaryErr;
+      }
+    }
 
     const rawText = (response.text || '').trim();
     let parsed;
@@ -260,7 +315,7 @@ app.post('/api/scan-expiry', async (req, res) => {
         foundDate: false,
         reason: (parsed && parsed.reason) || 'no_date',
         matchedText: (parsed && parsed.matchedText) || '',
-        model: GEMINI_FLASH_MODEL,
+        model: usedModel,
         durationMs
       });
     }
@@ -283,7 +338,7 @@ app.post('/api/scan-expiry', async (req, res) => {
         foundDate: false,
         reason: 'invalid_date',
         matchedText: String(parsed.matchedText || ''),
-        model: GEMINI_FLASH_MODEL,
+        model: usedModel,
         durationMs
       });
     }
@@ -296,7 +351,7 @@ app.post('/api/scan-expiry', async (req, res) => {
         foundDate: false,
         reason: 'invalid_day',
         matchedText: String(parsed.matchedText || ''),
-        model: GEMINI_FLASH_MODEL,
+        model: usedModel,
         durationMs
       });
     }
@@ -309,7 +364,7 @@ app.post('/api/scan-expiry', async (req, res) => {
       isMonthOnly,
       matchedText: String(parsed.matchedText || ''),
       reason: 'ok',
-      model: GEMINI_FLASH_MODEL,
+      model: usedModel,
       durationMs
     });
   } catch (err) {
@@ -319,12 +374,12 @@ app.post('/api/scan-expiry', async (req, res) => {
 
     if (status === 400 || status === 403 || /API_KEY_INVALID|PERMISSION_DENIED/i.test(msg)) {
       return res.status(status === 403 ? 403 : 400).json({
-        error: 'Gemini API key error. Please verify your API key in Settings > Secrets.'
+        error: 'Gemini API key error. Please check your billing-enabled API key in Settings > Secrets.'
       });
     }
     if (status === 429 || /RESOURCE_EXHAUSTED/i.test(msg)) {
       return res.status(429).json({
-        error: 'AI scan rate limit reached. Please wait a moment or use Scan Offline.'
+        error: 'AI scan quota reached. Check your billing-enabled API key in Settings > Secrets, or use Scan Offline.'
       });
     }
     if (status === 404 || /NOT_FOUND/i.test(msg)) {
