@@ -5,6 +5,10 @@
 // Options: 'Exp' (Experimental) | 'Dev' (Development) | 'Prod' (Production)
 const ENV = 'Dev';
 
+// PROD EXPIRY SCANNER TOGGLE (applies when ENV === 'Prod')
+// Options: 'offline' (Scan Offline button) | 'ai' (Scan using AI button)
+const PROD_SCAN_MODE = 'ai';
+
 // ENVIRONMENT API ENDPOINTS (Google Apps Script Web App URLs)
 const EXP_URL = 'https://script.google.com/macros/s/AKfycbw6E26vK0BKSvnje3BZKWhikeEsj0GGC3stHVuob6Lx7h6n7CXf5fXG7Wg0LOJ5ugTKDw/exec';
 const DEV_URL = 'https://script.google.com/macros/s/AKfycbyBV9vBOLiHHe-Defjzkhf6g7xXw979RGEp-kl-h_teOUUpcL-R-YZWtbSQHPEgvFlRcg/exec';

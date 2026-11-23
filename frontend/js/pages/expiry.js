@@ -1,13 +1,21 @@
 // ==========================================
 // expiry.js - Expiry Date Scanner Logic
-// Offline PaddleOCR PP-OCRv4 (Web Worker) + Dev Comparison with Gemini Flash AI
+// Offline PaddleOCR PP-OCRv4 (Web Worker) + Gemini Flash AI
 // ==========================================
 
 const isDevEnv = typeof ENV !== 'undefined' && ENV === 'Dev';
+const isProdEnv = typeof ENV !== 'undefined' && ENV === 'Prod';
+const prodScanMode =
+  typeof PROD_SCAN_MODE !== 'undefined' && String(PROD_SCAN_MODE).trim().toLowerCase() === 'ai'
+    ? 'ai'
+    : 'offline';
+const activeSingleScanMode = isProdEnv ? prodScanMode : 'offline';
+const usesOfflineScanner = isDevEnv || activeSingleScanMode === 'offline';
 
 const scanSingleGroup = document.getElementById('scan-single-group');
 const scanDevGroup = document.getElementById('scan-dev-group');
 const scanExpiryBtn = document.getElementById('scan-expiry-btn');
+const scanExpiryAiBtn = document.getElementById('scan-expiry-ai-btn');
 const scanOfflineBtn = document.getElementById('scan-offline-btn');
 const scanAiBtn = document.getElementById('scan-ai-btn');
 const cameraInput = document.getElementById('camera-input');
@@ -51,7 +59,10 @@ const pendingRequests = new Map();
 let activeStream = null;
 let torchOn = false;
 
-// Apply environment-specific scan controls (Dev shows 2 buttons: Scan Offline & Scan using AI)
+// Apply environment-specific scan controls:
+// - Dev: 2 side-by-side buttons (Scan Offline & Scan using AI)
+// - Prod: single button selected via PROD_SCAN_MODE in config.js ('offline' | 'ai')
+// - Exp: single Scan Offline button
 (function applyEnvironmentScanUI() {
   if (isDevEnv) {
     if (scanSingleGroup) scanSingleGroup.style.display = 'none';
@@ -59,6 +70,9 @@ let torchOn = false;
   } else {
     if (scanSingleGroup) scanSingleGroup.style.display = 'block';
     if (scanDevGroup) scanDevGroup.style.display = 'none';
+    const showAiSingle = activeSingleScanMode === 'ai';
+    if (scanExpiryBtn) scanExpiryBtn.style.display = showAiSingle ? 'none' : 'flex';
+    if (scanExpiryAiBtn) scanExpiryAiBtn.style.display = showAiSingle ? 'flex' : 'none';
   }
 })();
 
@@ -200,8 +214,9 @@ function runWorkerPass(rgbaUint8Clamped, width, height, mode, isCroppedStrip) {
   });
 }
 
-// Pre-warm offline scanner on page load
+// Pre-warm offline scanner on page load when offline scanning is enabled
 (async function bootstrapOfflineOcr() {
+  if (!usesOfflineScanner) return;
   const cached = await areModelsCached();
   if (cached || navigator.onLine) {
     // Warm up sessions in background so the first scan is fast
@@ -211,7 +226,7 @@ function runWorkerPass(rgbaUint8Clamped, width, height, mode, isCroppedStrip) {
 
 // Warm up sessions if the Service Worker finishes background OCR caching
 window.addEventListener('numpal:ocr-cache-ready', async () => {
-  if (!ocrReady && await areModelsCached()) {
+  if (usesOfflineScanner && !ocrReady && await areModelsCached()) {
     initOfflineOcr().catch(() => {});
   }
 });
@@ -357,7 +372,12 @@ async function openCameraViewfinder(mode = 'offline') {
 
   if (activeScanMode === 'ai') {
     if (!navigator.onLine) {
-      showToast('AI scan requires an internet connection. Use Scan Offline instead.', true);
+      showToast(
+        usesOfflineScanner
+          ? 'AI scan requires an internet connection. Use Scan Offline instead.'
+          : 'AI scan requires an internet connection. Please connect or key in the date below.',
+        true
+      );
       return;
     }
   } else {
@@ -513,11 +533,16 @@ async function processImagePixels(rgbaData, width, height, isCroppedStrip) {
 }
 
 // ==========================================
-// Scanner 2: Gemini Flash AI Processing (Dev Mode)
+// Scanner 2: Gemini Flash AI Processing
 // ==========================================
 async function processImageWithAI(imageBase64, mimeType) {
   if (!navigator.onLine) {
-    showToast('AI scan requires an internet connection. Use Scan Offline instead.', true);
+    showToast(
+      usesOfflineScanner
+        ? 'AI scan requires an internet connection. Use Scan Offline instead.'
+        : 'AI scan requires an internet connection. Please connect or key in the date below.',
+      true
+    );
     return;
   }
 
@@ -561,7 +586,13 @@ async function processImageWithAI(imageBase64, mimeType) {
   } catch (err) {
     console.error('Gemini Flash AI Scan Error:', err);
     setProcessingUI(false);
-    showToast(err.message || 'AI scan failed. Please try again or use Scan Offline.', true);
+    showToast(
+      err.message ||
+        (usesOfflineScanner
+          ? 'AI scan failed. Please try again or use Scan Offline.'
+          : 'AI scan failed. Please try again or key in the date below.'),
+      true
+    );
   } finally {
     if (typeof window.numpalSetBusy === 'function') window.numpalSetBusy(false);
   }
@@ -633,6 +664,9 @@ function loadFileToJpegBase64(file) {
 // ==========================================
 if (scanExpiryBtn) {
   scanExpiryBtn.addEventListener('click', () => openCameraViewfinder('offline'));
+}
+if (scanExpiryAiBtn) {
+  scanExpiryAiBtn.addEventListener('click', () => openCameraViewfinder('ai'));
 }
 if (scanOfflineBtn) {
   scanOfflineBtn.addEventListener('click', () => openCameraViewfinder('offline'));
