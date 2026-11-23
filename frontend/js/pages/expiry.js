@@ -1,0 +1,579 @@
+// ==========================================
+// expiry.js - Offline Expiry Date Scanner Logic (PaddleOCR PP-OCRv4 via Web Worker)
+// ==========================================
+
+const scanExpiryBtn = document.getElementById('scan-expiry-btn');
+const galleryUploadBtn = document.getElementById('gallery-upload-btn');
+const cameraInput = document.getElementById('camera-input');
+const manualCheckBtn = document.getElementById('manual-check-btn');
+const manualDateDisplay = document.getElementById('manual-date-display');
+const processingScreen = document.getElementById('processing-screen');
+const processingTitle = document.getElementById('processing-title');
+const processingSubtitle = document.getElementById('processing-subtitle');
+const goodOverlay = document.getElementById('obnoxious-good');
+const badOverlay = document.getElementById('obnoxious-bad');
+const notFoundOverlay = document.getElementById('obnoxious-not-found');
+const goodDetectedDateEl = document.getElementById('good-detected-date');
+const badDetectedDateEl = document.getElementById('bad-detected-date');
+const goodEditBtn = document.getElementById('good-edit-btn');
+const badEditBtn = document.getElementById('bad-edit-btn');
+const ocrStatusText = document.getElementById('ocr-status-text');
+const ocrProgressTrack = document.getElementById('ocr-progress-track');
+const ocrProgressFill = document.getElementById('ocr-progress-fill');
+
+// Camera modal elements
+const cameraModal = document.getElementById('camera-modal');
+const cameraVideo = document.getElementById('camera-video');
+const cameraGuideBox = document.getElementById('camera-guide-box');
+const cameraCloseBtn = document.getElementById('camera-close-btn');
+const cameraCaptureBtn = document.getElementById('camera-capture-btn');
+const cameraTorchBtn = document.getElementById('camera-torch-btn');
+const cameraFileBtn = document.getElementById('camera-file-btn');
+
+const OCR_CACHE_NAME = 'numpal-ocr-models-v1';
+const today = new Date();
+const options = { day: 'numeric', month: 'long', year: 'numeric' };
+const monthYearOptions = { month: 'long', year: 'numeric' };
+document.getElementById('today-date-display').innerText = today.toLocaleDateString('en-GB', options);
+
+let selectedManualDate = null;
+let lastScannedDate = null;
+
+// Worker & camera state
+let ocrWorker = null;
+let ocrReady = false;
+let ocrReadyPromise = null;
+let nextRequestId = 1;
+const pendingRequests = new Map();
+
+let activeStream = null;
+let torchOn = false;
+
+function getDaysInMonth(month, year) {
+  return new Date(year, month, 0).getDate();
+}
+
+function setStatusUI(text, isReady = false, progressPercent = null) {
+  if (ocrStatusText) {
+    ocrStatusText.textContent = text;
+    ocrStatusText.classList.toggle('ready', isReady);
+  }
+  if (ocrProgressTrack && ocrProgressFill) {
+    if (typeof progressPercent === 'number' && progressPercent > 0 && progressPercent < 100) {
+      ocrProgressTrack.style.display = 'block';
+      ocrProgressFill.style.width = `${progressPercent}%`;
+    } else {
+      ocrProgressTrack.style.display = 'none';
+      ocrProgressFill.style.width = '0%';
+    }
+  }
+}
+
+function setProcessingUI(visible, title = 'Reading date...', subtitle = '') {
+  processingScreen.style.display = visible ? 'flex' : 'none';
+  if (processingTitle) processingTitle.textContent = title;
+  if (processingSubtitle) processingSubtitle.textContent = subtitle;
+}
+
+// ==========================================
+// Offline OCR Web Worker Lifecycle
+// ==========================================
+async function areModelsCached() {
+  if (!('caches' in window)) return false;
+  try {
+    const cache = await caches.open(OCR_CACHE_NAME);
+    const keys = await cache.keys();
+    const urls = keys.map(r => r.url.split('?')[0]);
+    return (
+      urls.some(u => u.endsWith('/det.onnx')) &&
+      urls.some(u => u.endsWith('/rec.onnx')) &&
+      urls.some(u => u.endsWith('/en_dict.txt')) &&
+      urls.some(u => u.endsWith('/ort-wasm-simd-threaded.wasm')) &&
+      urls.some(u => u.endsWith('/ort-wasm-simd-threaded.mjs'))
+    );
+  } catch (_err) {
+    return false;
+  }
+}
+
+function ensureWorker() {
+  if (ocrWorker) return ocrWorker;
+
+  const workerUrl = new URL('../js/workers/ocr.worker.js', window.location.href);
+  ocrWorker = new Worker(workerUrl);
+
+  ocrWorker.onmessage = (event) => {
+    const msg = event.data;
+    if (!msg) return;
+
+    if (msg.type === 'progress') {
+      const pct = msg.percent;
+      if (pct >= 100) {
+        setStatusUI('Ready Offline ✓', true, 100);
+      } else {
+        setStatusUI(`${msg.status || 'Preparing offline scanner...'} ${pct}%`, false, pct);
+        if (processingScreen.style.display === 'flex' && processingSubtitle) {
+          processingSubtitle.textContent = `${msg.status || 'Preparing offline scanner...'} (${pct}%)`;
+        }
+      }
+      return;
+    }
+
+    if (msg.type === 'ready') {
+      ocrReady = true;
+      setStatusUI('Ready Offline ✓', true, 100);
+      if (ocrReadyPromise && ocrReadyPromise.resolve) {
+        ocrReadyPromise.resolve();
+      }
+      return;
+    }
+
+    if (msg.type === 'result') {
+      const pending = pendingRequests.get(msg.id);
+      if (pending) {
+        pendingRequests.delete(msg.id);
+        pending.resolve(msg.detections || []);
+      }
+      return;
+    }
+
+    if (msg.type === 'error') {
+      if (msg.id && pendingRequests.has(msg.id)) {
+        const pending = pendingRequests.get(msg.id);
+        pendingRequests.delete(msg.id);
+        pending.reject(new Error(msg.message || 'OCR error'));
+      } else if (ocrReadyPromise && ocrReadyPromise.reject) {
+        ocrReadyPromise.reject(new Error(msg.message || 'Failed to initialize offline scanner'));
+        ocrReadyPromise = null;
+      }
+    }
+  };
+
+  ocrWorker.onerror = (err) => {
+    const error = new Error(err.message || 'OCR worker failed');
+    for (const [, pending] of pendingRequests) {
+      pending.reject(error);
+    }
+    pendingRequests.clear();
+    if (ocrReadyPromise && ocrReadyPromise.reject) {
+      ocrReadyPromise.reject(error);
+      ocrReadyPromise = null;
+    }
+  };
+
+  return ocrWorker;
+}
+
+function initOfflineOcr() {
+  if (ocrReady) return Promise.resolve();
+  if (ocrReadyPromise) return ocrReadyPromise.promise;
+
+  let resolveFn, rejectFn;
+  const promise = new Promise((resolve, reject) => {
+    resolveFn = resolve;
+    rejectFn = reject;
+  });
+  ocrReadyPromise = { promise, resolve: resolveFn, reject: rejectFn };
+
+  const worker = ensureWorker();
+  worker.postMessage({ type: 'init' });
+  return promise;
+}
+
+function runWorkerPass(rgbaUint8Clamped, width, height, mode, isCroppedStrip) {
+  return new Promise((resolve, reject) => {
+    const worker = ensureWorker();
+    const id = nextRequestId++;
+    pendingRequests.set(id, { resolve, reject });
+    // Copy into transferable buffer so the caller can reuse pixel data for Pass 2 if needed
+    const copy = new Uint8ClampedArray(rgbaUint8Clamped);
+    worker.postMessage(
+      {
+        type: 'recognize',
+        id,
+        buffer: copy.buffer,
+        width,
+        height,
+        mode,
+        isCroppedStrip
+      },
+      [copy.buffer]
+    );
+  });
+}
+
+// Pre-warm offline scanner on page load
+(async function bootstrapOfflineOcr() {
+  const cached = await areModelsCached();
+  if (cached) {
+    setStatusUI('Ready Offline ✓', true);
+    // Warm up sessions in background so the first scan is fast
+    initOfflineOcr().catch(() => {});
+  } else if (navigator.onLine) {
+    setStatusUI('Preparing offline scanner...', false, 5);
+    initOfflineOcr().catch(() => {
+      setStatusUI('Tap Scan to prepare offline scanner', false);
+    });
+  } else {
+    setStatusUI('Connect once to save offline scanner', false);
+  }
+})();
+
+// Update status immediately if the Service Worker finishes background OCR warming
+window.addEventListener('numpal:ocr-cache-ready', async () => {
+  if (!ocrReady && await areModelsCached()) {
+    setStatusUI('Ready Offline ✓', true);
+    initOfflineOcr().catch(() => {});
+  }
+});
+
+// Release ONNX sessions when leaving page to preserve mobile memory
+window.addEventListener('pagehide', () => {
+  stopCamera();
+  if (ocrWorker) {
+    try {
+      ocrWorker.postMessage({ type: 'release' });
+      ocrWorker.terminate();
+    } catch (_err) {}
+    ocrWorker = null;
+    ocrReady = false;
+    ocrReadyPromise = null;
+  }
+});
+
+// ==========================================
+// Manual Date Picker (Rolodex)
+// ==========================================
+window.openDatePicker = function () {
+  const currYear = today.getFullYear();
+
+  const startD = selectedManualDate ? selectedManualDate.getDate() : today.getDate();
+  const startM = selectedManualDate ? selectedManualDate.getMonth() + 1 : today.getMonth() + 1;
+  const startY = selectedManualDate ? selectedManualDate.getFullYear() : currYear;
+
+  window.currentMaxDays = getDaysInMonth(startM, startY);
+
+  window.openRolodex(
+    'Select Date',
+    [
+      { id: 'day', items: window.RoloGen.days(window.currentMaxDays), selectedValue: startD },
+      { id: 'month', items: window.RoloGen.monthsSpec(), selectedValue: startM, flex: 1.8 },
+      { id: 'year', items: window.RoloGen.years(currYear - 6, 19), selectedValue: startY }
+    ],
+    (res) => {
+      const year = parseInt(res.year, 10);
+      const month = parseInt(res.month, 10) - 1;
+      const day = parseInt(res.day, 10);
+
+      selectedManualDate = new Date(year, month, day);
+      manualDateDisplay.innerText = selectedManualDate.toLocaleDateString('en-GB', options);
+    },
+    (res, rolo) => {
+      const y = parseInt(res.year, 10);
+      const m = parseInt(res.month, 10);
+      const currentD = parseInt(res.day, 10);
+
+      const maxDays = getDaysInMonth(m, y);
+
+      if (window.currentMaxDays !== maxDays) {
+        window.currentMaxDays = maxDays;
+        const safeDay = currentD > maxDays ? maxDays : currentD;
+        rolo.updateColumn('day', window.RoloGen.days(maxDays), safeDay);
+      }
+    }
+  );
+};
+
+window.editDetectedDate = function () {
+  if (lastScannedDate) {
+    selectedManualDate = new Date(lastScannedDate);
+    manualDateDisplay.innerText = selectedManualDate.toLocaleDateString('en-GB', options);
+  }
+  window.closeOverlay();
+  window.openDatePicker();
+};
+
+function showResultOverlay(isExpired, dateObj, isFromScan, isMonthOnly = false) {
+  const formatted = dateObj
+    ? isMonthOnly
+      ? `End of ${dateObj.toLocaleDateString('en-GB', monthYearOptions)}`
+      : dateObj.toLocaleDateString('en-GB', options)
+    : '';
+
+  if (isExpired) {
+    if (badDetectedDateEl) {
+      badDetectedDateEl.textContent = formatted ? `Date read: ${formatted}` : '';
+      badDetectedDateEl.style.display = formatted ? 'block' : 'none';
+    }
+    if (badEditBtn) badEditBtn.style.display = isFromScan ? 'block' : 'none';
+    badOverlay.style.display = 'flex';
+  } else {
+    if (goodDetectedDateEl) {
+      goodDetectedDateEl.textContent = formatted ? `Date read: ${formatted}` : '';
+      goodDetectedDateEl.style.display = formatted ? 'block' : 'none';
+    }
+    if (goodEditBtn) goodEditBtn.style.display = isFromScan ? 'block' : 'none';
+    goodOverlay.style.display = 'flex';
+  }
+}
+
+manualCheckBtn.addEventListener('click', () => {
+  if (!selectedManualDate) {
+    showToast('Please tap to select a date first.', true);
+    return;
+  }
+  setProcessingUI(true, 'Checking date...', '');
+
+  setTimeout(() => {
+    setProcessingUI(false);
+    const checkDate = new Date(selectedManualDate);
+    checkDate.setHours(0, 0, 0, 0);
+    const compareToday = new Date(today);
+    compareToday.setHours(0, 0, 0, 0);
+
+    showResultOverlay(checkDate < compareToday, checkDate, false, false);
+  }, 400);
+});
+
+// ==========================================
+// Guided Live Camera Viewfinder + File Fallback
+// ==========================================
+function stopCamera() {
+  if (activeStream) {
+    activeStream.getTracks().forEach(t => t.stop());
+    activeStream = null;
+  }
+  torchOn = false;
+  if (cameraTorchBtn) {
+    cameraTorchBtn.classList.remove('active');
+    cameraTorchBtn.style.display = 'none';
+  }
+  if (cameraVideo) {
+    cameraVideo.srcObject = null;
+  }
+  if (cameraModal) {
+    const wasOpen = cameraModal.classList.contains('open');
+    cameraModal.classList.remove('open');
+    cameraModal.setAttribute('aria-hidden', 'true');
+    if (wasOpen && typeof window.numpalSetBusy === 'function') {
+      window.numpalSetBusy(false);
+    }
+  }
+}
+
+async function openCameraViewfinder() {
+  // Check if offline & models not yet downloaded
+  const cached = await areModelsCached();
+  if (!cached && !navigator.onLine) {
+    showToast('Connect once to download the offline scanner (~15 MB), or key in the date below.', true);
+    return;
+  }
+
+  // Start warming up OCR engine while user aims camera
+  initOfflineOcr().catch(() => {});
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    cameraInput.click();
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: 'environment' },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 }
+      },
+      audio: false
+    });
+
+    activeStream = stream;
+    cameraVideo.srcObject = stream;
+    cameraModal.classList.add('open');
+    cameraModal.setAttribute('aria-hidden', 'false');
+    if (typeof window.numpalSetBusy === 'function') {
+      window.numpalSetBusy(true);
+    }
+
+    // Enable torch toggle if camera track supports flash/torch
+    const videoTrack = stream.getVideoTracks()[0];
+    if (videoTrack && typeof videoTrack.getCapabilities === 'function') {
+      const caps = videoTrack.getCapabilities();
+      if (caps && caps.torch) {
+        cameraTorchBtn.style.display = 'inline-block';
+      }
+    }
+  } catch (_err) {
+    // Permission denied, no rear camera, or embedded preview restriction -> fallback to file/camera picker
+    stopCamera();
+    cameraInput.click();
+  }
+}
+
+function captureFromViewfinder() {
+  if (!cameraVideo || !cameraVideo.videoWidth || !cameraVideo.videoHeight) return;
+
+  const vw = cameraVideo.videoWidth;
+  const vh = cameraVideo.videoHeight;
+  const vr = cameraVideo.getBoundingClientRect();
+  const gr = cameraGuideBox.getBoundingClientRect();
+
+  // Map guide box coordinates onto the underlying video frame accounting for object-fit: cover
+  const scale = Math.max(vr.width / vw, vr.height / vh);
+  const renderedW = vw * scale;
+  const renderedH = vh * scale;
+  const offsetX = (vr.width - renderedW) / 2;
+  const offsetY = (vr.height - renderedH) / 2;
+
+  const relX = gr.left - vr.left;
+  const relY = gr.top - vr.top;
+
+  let sx = (relX - offsetX) / scale;
+  let sy = (relY - offsetY) / scale;
+  let sw = gr.width / scale;
+  let sh = gr.height / scale;
+
+  // Add a forgiving 14% padding around the guide box so edge digits are never cut off
+  const padX = sw * 0.14;
+  const padY = sh * 0.22;
+  sx = Math.max(0, sx - padX);
+  sy = Math.max(0, sy - padY);
+  sw = Math.min(vw - sx, sw + padX * 2);
+  sh = Math.min(vh - sy, sh + padY * 2);
+
+  // Scale captured crop cleanly (max width 960px for crisp OCR + fast WASM execution)
+  const MAX_WIDTH = 960;
+  const outScale = sw > MAX_WIDTH ? MAX_WIDTH / sw : 1;
+  const outW = Math.max(32, Math.round(sw * outScale));
+  const outH = Math.max(32, Math.round(sh * outScale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = outW;
+  canvas.height = outH;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(cameraVideo, sx, sy, sw, sh, 0, 0, outW, outH);
+  const imageData = ctx.getImageData(0, 0, outW, outH);
+
+  stopCamera();
+  processImagePixels(imageData.data, outW, outH, true);
+}
+
+async function processImagePixels(rgbaData, width, height, isCroppedStrip) {
+  if (typeof window.numpalSetBusy === 'function') window.numpalSetBusy(true);
+  setProcessingUI(true, 'Reading date...', ocrReady ? 'Scanning image offline...' : 'Loading offline OCR engine...');
+
+  try {
+    await initOfflineOcr();
+
+    // Pass 1: Standard PaddleOCR PP-OCRv4 detection + recognition
+    setProcessingUI(true, 'Reading date...', 'Detecting text...');
+    const pass1Detections = await runWorkerPass(rgbaData, width, height, 'standard', isCroppedStrip);
+    let parsed = window.ExpiryDateParser.parse(pass1Detections, today);
+
+    // Pass 2: Dot-matrix rescue enhancement if Pass 1 did not find a valid expiry date
+    if (!parsed.foundDate) {
+      setProcessingUI(true, 'Reading date...', 'Enhancing dot-matrix print...');
+      const pass2Detections = await runWorkerPass(rgbaData, width, height, 'dot-matrix', isCroppedStrip);
+      const parsed2 = window.ExpiryDateParser.parse(pass2Detections, today);
+      if (parsed2.foundDate) {
+        parsed = parsed2;
+      }
+    }
+
+    setProcessingUI(false);
+
+    if (parsed.foundDate) {
+      lastScannedDate = new Date(parsed.date);
+      selectedManualDate = new Date(parsed.date);
+      manualDateDisplay.innerText = selectedManualDate.toLocaleDateString('en-GB', options);
+      showResultOverlay(parsed.isExpired, parsed.date, true, parsed.isMonthOnly);
+    } else {
+      notFoundOverlay.style.display = 'flex';
+    }
+  } catch (err) {
+    console.error('Offline OCR Error:', err);
+    setProcessingUI(false);
+    if (!navigator.onLine) {
+      showToast('Offline scanner needs one online load to cache models.', true);
+    } else {
+      showToast('Could not read image. Please try again.', true);
+    }
+  } finally {
+    if (typeof window.numpalSetBusy === 'function') window.numpalSetBusy(false);
+  }
+}
+
+function loadFileToRGBA(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX_SIDE = 1024;
+        let scale = 1;
+        if (Math.max(img.width, img.height) > MAX_SIDE) {
+          scale = MAX_SIDE / Math.max(img.width, img.height);
+        }
+        const w = Math.max(32, Math.round(img.width * scale));
+        const h = Math.max(32, Math.round(img.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0, w, h);
+        const imageData = ctx.getImageData(0, 0, w, h);
+        resolve({ data: imageData.data, width: w, height: h });
+      };
+      img.onerror = () => reject(new Error('Invalid image file'));
+      img.src = event.target.result;
+    };
+    reader.onerror = () => reject(new Error('Failed to read image file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+// Event bindings
+scanExpiryBtn.addEventListener('click', openCameraViewfinder);
+
+galleryUploadBtn.addEventListener('click', async () => {
+  const cached = await areModelsCached();
+  if (!cached && !navigator.onLine) {
+    showToast('Connect once to download the offline scanner (~15 MB), or key in the date below.', true);
+    return;
+  }
+  cameraInput.click();
+});
+
+cameraCloseBtn.addEventListener('click', stopCamera);
+cameraCaptureBtn.addEventListener('click', captureFromViewfinder);
+cameraFileBtn.addEventListener('click', () => {
+  stopCamera();
+  cameraInput.click();
+});
+
+cameraTorchBtn.addEventListener('click', async () => {
+  if (!activeStream) return;
+  const track = activeStream.getVideoTracks()[0];
+  if (!track) return;
+  try {
+    torchOn = !torchOn;
+    await track.applyConstraints({ advanced: [{ torch: torchOn }] });
+    cameraTorchBtn.classList.toggle('active', torchOn);
+  } catch (_err) {
+    torchOn = false;
+    cameraTorchBtn.classList.remove('active');
+  }
+});
+
+cameraInput.addEventListener('change', async (e) => {
+  if (!e.target.files || e.target.files.length === 0) return;
+  const file = e.target.files[0];
+  try {
+    const { data, width, height } = await loadFileToRGBA(file);
+    await processImagePixels(data, width, height, false);
+  } catch (_err) {
+    showToast('Could not open image. Please try again.', true);
+  } finally {
+    cameraInput.value = '';
+  }
+});

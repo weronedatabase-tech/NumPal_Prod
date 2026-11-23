@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Expiration | NumPal</title>
+  <meta name="theme-color" content="#000000">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="NumPal">
+  <link rel="apple-touch-icon" href="../../assets/icon-192.png">
+  <link rel="manifest" href="../../manifest.json">
+  <link rel="stylesheet" href="../css/styles.css">
+</head>
+<body>
+  <header class="top-bar">
+      <a href="../../index.html" class="back-btn" aria-label="Go back">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg> Back
+      </a>
+      <h1>📅 Expiration Date</h1>
+      <div class="header-actions">
+          <a href="../../index.html" class="header-icon-btn" aria-label="Home">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+          </a>
+          <button id="theme-toggle" class="header-icon-btn" style="font-size:1.5rem;">🌗</button>
+      </div>
+  </header>
+
+  <main class="page-content">
+      <div class="content-body" style="gap: 1.5rem; justify-content: space-evenly;">
+          
+          <div style="text-align: center; flex-shrink: 0;">
+              <p style="margin: 0; font-weight: bold; font-size: 1.2rem; opacity: 0.8;">Today is:</p>
+              <h2 id="today-date-display" style="margin: 5px 0 0 0; font-size: 2.2rem; color: var(--primary-color);"></h2>
+          </div>
+          
+          <div style="width: 100%; flex-shrink: 0;">
+              <button type="button" id="scan-expiry-btn" class="scan-expiry-btn">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+                  <span style="font-weight: bold; font-size: 1.4rem;">Scan Expiration Date</span>
+              </button>
+              <input type="file" accept="image/*" capture="environment" id="camera-input" style="display:none;">
+              <div class="scan-secondary-row">
+                  <button type="button" id="gallery-upload-btn" class="gallery-link-btn">Choose photo</button>
+                  <span id="ocr-status-text" class="ocr-status-text">Checking offline scanner...</span>
+              </div>
+              <div id="ocr-progress-track" class="ocr-progress-track">
+                  <div id="ocr-progress-fill" class="ocr-progress-fill"></div>
+              </div>
+          </div>
+
+          <hr style="border: 0; border-top: 2px dashed var(--card-border); width: 100%; opacity: 0.5;">
+
+          <div style="text-align: center; flex-shrink: 0; width: 100%;">
+              <p style="font-weight: bold; margin: 0 0 10px 0; opacity: 0.8; font-size: 1rem;">Not able to scan? Key in Expiration Date below:</p>
+              <p id="manual-date-display" class="time-card-display" onclick="openDatePicker()" style="margin-bottom: 15px;">Tap to select date</p>
+          </div>
+
+      </div>
+
+      <div class="step-footer">
+          <button class="primary-btn" id="manual-check-btn">Check Date</button>
+      </div>
+
+  </main>
+
+  <!-- Guided Live Camera Viewfinder Modal -->
+  <div id="camera-modal" class="camera-modal" aria-hidden="true">
+      <div class="camera-stage">
+          <video id="camera-video" class="camera-video" autoplay playsinline muted></video>
+          <div class="camera-overlay-mask">
+              <div class="camera-guide-hint">Line up the expiry date inside the box</div>
+              <div id="camera-guide-box" class="camera-guide-box"></div>
+              <div class="camera-guide-tip">Hold steady &amp; keep date clear and bright</div>
+          </div>
+      </div>
+      <div class="camera-controls">
+          <button type="button" id="camera-close-btn" class="camera-action-btn">Cancel</button>
+          <button type="button" id="camera-capture-btn" class="camera-shutter-btn" aria-label="Take Photo"></button>
+          <div class="camera-right-actions">
+              <button type="button" id="camera-torch-btn" class="camera-action-btn" style="display: none;">Light</button>
+              <button type="button" id="camera-file-btn" class="camera-action-btn">Photo</button>
+          </div>
+      </div>
+  </div>
+
+  <div id="processing-screen" class="processing-overlay" style="display: none;">
+      <div class="processing-spinner">⏳</div>
+      <h2 id="processing-title" style="font-size: 2rem; margin: 0;">Reading date...</h2>
+      <p id="processing-subtitle" style="margin: 0.6rem 0 0 0; font-size: 1.1rem; opacity: 0.85;"></p>
+  </div>
+
+  <div id="obnoxious-good" class="obnoxious-overlay good" style="display: none;">
+      <div class="giant-icon">✅</div>
+      <h1>SAFE!</h1>
+      <div id="good-detected-date" class="detected-date-badge" style="display: none;"></div>
+      <p>You can eat/use this.</p>
+      <button class="obnoxious-btn" onclick="closeOverlay()">OKAY</button>
+      <button id="good-edit-btn" class="obnoxious-secondary-btn" onclick="editDetectedDate()" style="display: none;">Wrong Date? Edit</button>
+  </div>
+
+  <div id="obnoxious-bad" class="obnoxious-overlay bad" style="display: none;">
+      <div class="giant-icon">❌</div>
+      <h1>EXPIRED!</h1>
+      <div id="bad-detected-date" class="detected-date-badge" style="display: none;"></div>
+      <p>DO NOT eat/use this!</p>
+      <button class="obnoxious-btn" onclick="closeOverlay()">OKAY</button>
+      <button id="bad-edit-btn" class="obnoxious-secondary-btn" onclick="editDetectedDate()" style="display: none;">Wrong Date? Edit</button>
+  </div>
+
+  <div id="obnoxious-not-found" class="obnoxious-overlay" style="display: none; background-color: #FF9800; color: white;">
+      <div class="giant-icon">❓</div>
+      <h1 style="font-size: 3rem; margin-bottom: 0.5rem; text-transform: uppercase;">NOT FOUND</h1>
+      <p style="font-size: 1.9rem; font-weight: bold; line-height: 1.25; margin: 0 0 2.5rem 0;">No Expiry Date found.<br>Hold closer &amp; try again</p>
+      <button class="obnoxious-btn" onclick="closeOverlay()">OKAY</button>
+  </div>
+
+  <script src="../js/core/config.js"></script>
+  <script src="../js/core/app.js"></script>
+  <script src="../js/utils/ui.js"></script>
+  <script src="../js/utils/rolodex.js"></script>
+  <script src="../js/utils/date-parser.js"></script>
+  <script src="../js/pages/expiry.js"></script>
+</body>
+</html>

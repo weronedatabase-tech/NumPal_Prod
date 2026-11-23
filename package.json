@@ -1,0 +1,16 @@
+{
+  "name": "numpal",
+  "version": "1.0.0",
+  "private": true,
+  "description": "An everyday app for managing time and money to foster independent living.",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js",
+    "build": "node scripts/verify.js",
+    "lint": "node scripts/verify.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "onnxruntime-web": "^1.31.1"
+  }
+}

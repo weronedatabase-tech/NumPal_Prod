@@ -1,0 +1,7 @@
+{
+  "name": "NumPal",
+  "description": "An everyday app for managing time and money to foster independent living.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
