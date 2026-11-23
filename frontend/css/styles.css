@@ -430,6 +430,20 @@ border-top: 1px dashed rgba(255, 255, 255, 0.45);
 color: rgba(255, 255, 255, 0.9); font-size: 0.9rem; font-weight: 600;
 margin-top: 14px; text-align: center; text-shadow: 0 1px 4px rgba(0,0,0,0.9);
 }
+.camera-modal.ai-mode .camera-overlay-mask {
+justify-content: space-between;
+padding: max(18px, env(safe-area-inset-top, 18px)) 1.2rem 18px 1.2rem;
+}
+.camera-modal.ai-mode .camera-guide-box {
+display: none;
+}
+.camera-modal.ai-mode .camera-guide-hint {
+margin-bottom: 0;
+}
+.camera-modal.ai-mode .camera-guide-tip {
+margin-top: 0; background: rgba(0, 0, 0, 0.55);
+padding: 0.4rem 0.9rem; border-radius: 8px;
+}
 .camera-controls {
 flex-shrink: 0; background: #111111; padding: 16px 20px;
 padding-bottom: max(18px, env(safe-area-inset-bottom, 18px));

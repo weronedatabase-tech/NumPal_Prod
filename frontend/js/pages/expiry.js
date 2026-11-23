@@ -333,9 +333,12 @@ manualCheckBtn.addEventListener('click', () => {
 // ==========================================
 function updateViewfinderModeUI(mode) {
   const isAi = mode === 'ai';
+  if (cameraModal) {
+    cameraModal.classList.toggle('ai-mode', isAi);
+  }
   if (cameraGuideHint) {
     cameraGuideHint.textContent = isAi
-      ? 'AI Scan: Line up the expiry date inside the box'
+      ? 'AI Scan: Point camera at the expiry date'
       : 'Line up the expiry date inside the box';
   }
   if (cameraCaptureBtn) {
@@ -434,38 +437,54 @@ function captureFromViewfinder() {
 
   const vw = cameraVideo.videoWidth;
   const vh = cameraVideo.videoHeight;
-  const vr = cameraVideo.getBoundingClientRect();
-  const gr = cameraGuideBox.getBoundingClientRect();
-
-  // Map guide box coordinates onto the underlying video frame accounting for object-fit: cover
-  const scale = Math.max(vr.width / vw, vr.height / vh);
-  const renderedW = vw * scale;
-  const renderedH = vh * scale;
-  const offsetX = (vr.width - renderedW) / 2;
-  const offsetY = (vr.height - renderedH) / 2;
-
-  const relX = gr.left - vr.left;
-  const relY = gr.top - vr.top;
-
-  let sx = (relX - offsetX) / scale;
-  let sy = (relY - offsetY) / scale;
-  let sw = gr.width / scale;
-  let sh = gr.height / scale;
-
-  // Give AI mode slightly wider padding so nearby EXP / BEST BEFORE labels stay in frame
   const isAi = activeScanMode === 'ai';
-  const padX = sw * (isAi ? 0.24 : 0.14);
-  const padY = sh * (isAi ? 0.35 : 0.22);
-  sx = Math.max(0, sx - padX);
-  sy = Math.max(0, sy - padY);
-  sw = Math.min(vw - sx, sw + padX * 2);
-  sh = Math.min(vh - sy, sh + padY * 2);
 
-  // Scale captured crop cleanly
-  const MAX_WIDTH = isAi ? 1280 : 960;
-  const outScale = sw > MAX_WIDTH ? MAX_WIDTH / sw : 1;
-  const outW = Math.max(32, Math.round(sw * outScale));
-  const outH = Math.max(32, Math.round(sh * outScale));
+  let sx = 0;
+  let sy = 0;
+  let sw = vw;
+  let sh = vh;
+  let outW;
+  let outH;
+
+  if (isAi) {
+    // AI mode: capture the full camera frame without cropping to the small guide rectangle
+    const MAX_SIDE = 1280;
+    const maxDim = Math.max(vw, vh);
+    const outScale = maxDim > MAX_SIDE ? MAX_SIDE / maxDim : 1;
+    outW = Math.max(32, Math.round(vw * outScale));
+    outH = Math.max(32, Math.round(vh * outScale));
+  } else {
+    const vr = cameraVideo.getBoundingClientRect();
+    const gr = cameraGuideBox.getBoundingClientRect();
+
+    // Map guide box coordinates onto the underlying video frame accounting for object-fit: cover
+    const scale = Math.max(vr.width / vw, vr.height / vh);
+    const renderedW = vw * scale;
+    const renderedH = vh * scale;
+    const offsetX = (vr.width - renderedW) / 2;
+    const offsetY = (vr.height - renderedH) / 2;
+
+    const relX = gr.left - vr.left;
+    const relY = gr.top - vr.top;
+
+    sx = (relX - offsetX) / scale;
+    sy = (relY - offsetY) / scale;
+    sw = gr.width / scale;
+    sh = gr.height / scale;
+
+    const padX = sw * 0.14;
+    const padY = sh * 0.22;
+    sx = Math.max(0, sx - padX);
+    sy = Math.max(0, sy - padY);
+    sw = Math.min(vw - sx, sw + padX * 2);
+    sh = Math.min(vh - sy, sh + padY * 2);
+
+    // Scale captured crop cleanly
+    const MAX_WIDTH = 960;
+    const outScale = sw > MAX_WIDTH ? MAX_WIDTH / sw : 1;
+    outW = Math.max(32, Math.round(sw * outScale));
+    outH = Math.max(32, Math.round(sh * outScale));
+  }
 
   const canvas = document.createElement('canvas');
   canvas.width = outW;
