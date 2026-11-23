@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - 'backend/**'
+      - '.github/workflows/deploy-gas.yml'
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -23,40 +25,160 @@ jobs:
         run: npm install -g @google/clasp
 
       - name: Write Clasp Credentials
+        env:
+          CLASP_CREDENTIALS: ${{ secrets.CLASP_CREDENTIALS }}
         run: |
-          # The jq filter checks if the secret is in the custom tokens.default format.
-          # If it is, it parses and maps it to the standard clasp format. 
-          # Otherwise, it passes it through as-is.
-          echo '${{ secrets.CLASP_CREDENTIALS }}' | jq '
-            if .tokens.default then 
-              { 
-                token: { 
-                  access_token: .tokens.default.access_token, 
-                  refresh_token: .tokens.default.refresh_token, 
-                  token_type: "Bearer" 
-                }, 
-                oauth2ClientSettings: { 
-                  clientId: .tokens.default.client_id, 
-                  clientSecret: .tokens.default.client_secret, 
-                  redirectUri: "http://localhost" 
-                }, 
-                isLocalCreds: false 
-              } 
-            else 
-              . 
-            end
-          ' > ~/.clasprc.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const os = require('os');
+          const path = require('path');
+          const { execSync } = require('child_process');
+
+          let raw = process.env.CLASP_CREDENTIALS || '';
+          raw = raw.replace(/^\uFEFF/, '').trim();
+
+          if (!raw) {
+            console.error('Error: CLASP_CREDENTIALS secret is empty.');
+            process.exit(1);
+          }
+
+          // Extract JSON object if stray lines (e.g. markdown fences or terminal prompt) surround it
+          const firstBrace = raw.indexOf('{');
+          const lastBrace = raw.lastIndexOf('}');
+          if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
+            console.error('Error: CLASP_CREDENTIALS does not contain a JSON object.');
+            process.exit(1);
+          }
+          let candidate = raw.slice(firstBrace, lastBrace + 1);
+
+          // Repair hard line-wraps inside double-quoted JSON strings caused by copying from a terminal
+          function repairWrappedStrings(str) {
+            let out = '';
+            let inString = false;
+            let escaped = false;
+            for (let i = 0; i < str.length; i++) {
+              const ch = str[i];
+              if (inString) {
+                if (escaped) {
+                  out += ch;
+                  escaped = false;
+                } else if (ch === '\\') {
+                  out += ch;
+                  escaped = true;
+                } else if (ch === '"') {
+                  inString = false;
+                  out += ch;
+                } else if (ch === '\r' || ch === '\n') {
+                  // Drop hard terminal wrap inside a quoted token/string
+                  continue;
+                } else {
+                  out += ch;
+                }
+              } else {
+                if (ch === '"') inString = true;
+                out += ch;
+              }
+            }
+            return out;
+          }
+
+          let parsed;
+          try {
+            parsed = JSON.parse(candidate);
+          } catch (_firstErr) {
+            try {
+              parsed = JSON.parse(repairWrappedStrings(candidate));
+            } catch (secondErr) {
+              console.error('Error: Failed to parse CLASP_CREDENTIALS as valid JSON:', secondErr.message);
+              console.error('Re-copy ~/.clasprc.json as single-line JSON using: cat ~/.clasprc.json | tr -d "\\n"');
+              process.exit(1);
+            }
+          }
+
+          // Detect installed @google/clasp major version (v3 uses tokens.default, v2 uses token + oauth2ClientSettings)
+          let claspMajor = 3;
+          try {
+            const verOut = execSync('clasp --version', { encoding: 'utf8' }).trim();
+            const match = verOut.match(/(\d+)\./);
+            if (match) claspMajor = Number(match[1]);
+            console.log(`Detected clasp version: ${verOut} (major ${claspMajor})`);
+          } catch (_err) {
+            console.log('Could not detect clasp version; assuming v3 format.');
+          }
+
+          let output = parsed;
+          if (claspMajor >= 3) {
+            // Convert legacy v2 format into clasp v3 tokens.default format if needed
+            if (!parsed.tokens && parsed.token) {
+              const oauth = parsed.oauth2ClientSettings || {};
+              output = {
+                tokens: {
+                  default: {
+                    type: 'authorized_user',
+                    client_id: oauth.clientId || '',
+                    client_secret: oauth.clientSecret || '',
+                    refresh_token: parsed.token.refresh_token || '',
+                    access_token: parsed.token.access_token || '',
+                    token_type: parsed.token.token_type || 'Bearer',
+                    ...(parsed.token.expiry_date ? { expiry_date: parsed.token.expiry_date } : {})
+                  }
+                }
+              };
+            }
+          } else if (parsed.tokens && parsed.tokens.default) {
+            // Convert v3 tokens.default into legacy clasp v2 format
+            const def = parsed.tokens.default;
+            output = {
+              token: {
+                access_token: def.access_token,
+                refresh_token: def.refresh_token,
+                token_type: def.token_type || 'Bearer',
+                ...(def.expiry_date ? { expiry_date: def.expiry_date } : {})
+              },
+              oauth2ClientSettings: {
+                clientId: def.client_id,
+                clientSecret: def.client_secret,
+                redirectUri: 'http://localhost'
+              },
+              isLocalCreds: false
+            };
+          }
+
+          const rcPath = path.join(os.homedir(), '.clasprc.json');
+          fs.writeFileSync(rcPath, JSON.stringify(output, null, 2) + '\n', { mode: 0o600 });
+          console.log('Wrote ~/.clasprc.json successfully.');
+          NODE
 
       - name: Create Clasp Project Config
+        env:
+          GAS_SCRIPT_ID: ${{ secrets.GAS_SCRIPT_ID }}
         run: |
-          # Dynamically create the .clasp.json file using the GitHub secret
-          echo '{ "scriptId": "${{ secrets.GAS_SCRIPT_ID }}", "rootDir": "." }' > backend/.clasp.json
+          node - <<'NODE'
+          const fs = require('fs');
+          const scriptId = String(process.env.GAS_SCRIPT_ID || '').trim();
+          if (!scriptId) {
+            console.error('Error: GAS_SCRIPT_ID secret is empty.');
+            process.exit(1);
+          }
+          fs.writeFileSync(
+            'backend/.clasp.json',
+            JSON.stringify({ scriptId, rootDir: '.' }, null, 2) + '\n'
+          );
+          console.log('Wrote backend/.clasp.json successfully.');
+          NODE
 
       - name: Push and Deploy to Google Apps Script
+        env:
+          GAS_DEPLOYMENT_ID: ${{ secrets.GAS_DEPLOYMENT_ID }}
         run: |
           cd backend
           # Push the latest code to the Apps Script editor
           clasp push -f
-          
+
           # Deploy a new version and update the existing Web App URL
-          clasp deploy -i ${{ secrets.GAS_DEPLOYMENT_ID }} -d "Auto-deployed via GitHub Actions"
+          DEPLOYMENT_ID="$(printf '%s' "$GAS_DEPLOYMENT_ID" | tr -d '\r\n ')"
+          if [ -z "$DEPLOYMENT_ID" ]; then
+            echo "Error: GAS_DEPLOYMENT_ID secret is empty."
+            exit 1
+          fi
+          clasp deploy -i "$DEPLOYMENT_ID" -d "Auto-deployed via GitHub Actions"
