@@ -26,7 +26,7 @@ const TRACKED_APP_FILES = [
   'sw.js',
   'version.json',
   'frontend/css/styles.css',
-  'frontend/js/core/config.js',
+  'backend/config.js',
   'frontend/js/core/app.js',
   'frontend/js/utils/ui.js',
   'frontend/js/utils/rolodex.js',
@@ -371,6 +371,11 @@ const staticOptions = {
 
 app.use('/frontend', express.static(path.join(ROOT_DIR, 'frontend'), staticOptions));
 app.use('/assets', express.static(path.join(ROOT_DIR, 'assets'), staticOptions));
+
+app.get('/backend/config.js', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(ROOT_DIR, 'backend', 'config.js'));
+});
 
 app.get(['/', '/index.html'], (_req, res) => {
   res.setHeader('Cache-Control', 'no-cache');

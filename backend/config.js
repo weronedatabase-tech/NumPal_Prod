@@ -1,5 +1,5 @@
 // ==========================================
-// config.js - Application Configuration
+// backend/config.js - Application Configuration
 // ==========================================
 // ENVIRONMENT TOGGLE
 // Options: 'Exp' (Experimental) | 'Dev' (Development) | 'Prod' (Production)

@@ -9,16 +9,16 @@ This repository has been restructured to facilitate modular development, isolate
   - `css/`: Stylesheets.
   - `pages/`: HTML views for the application.
   - `js/`: Modular JavaScript logic.
-    - `core/`: Core initialization and configurations (`config.js`, `app.js`).
+    - `core/`: Core initialization logic (`app.js`).
     - `utils/`: Shared utilities (`ui.js`, `rolodex.js`).
     - `pages/`: Page-specific scripts, directly mapping to HTML views.
-- `backend/`: Contains Google Apps Script backend logic.
+- `backend/`: Contains Google Apps Script backend logic (`Code.js`) and shared application configuration (`config.js`).
 - `assets/`: Contains images and application icons.
 - `.github/workflows/`: Contains GitHub Actions for continuous deployment.
 
 ## Environment Management
 
-You can toggle between the 3 environments (Exp, Dev, Prod) by altering the `ENV` constant inside `frontend/js/core/config.js`. 
+You can toggle between the 3 environments (Exp, Dev, Prod) by altering the `ENV` constant inside `backend/config.js`.
 - **Dev**: Displays a persistent red `Testing` banner.
 - **Exp**: Displays a persistent purple `Experimentation` banner.
 - **Prod**: Operates normally with no banner.

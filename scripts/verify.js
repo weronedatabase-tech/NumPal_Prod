@@ -19,8 +19,12 @@ function collectJsFiles(dir, out = []) {
   return out;
 }
 
-// 1. Validate JS syntax across server, service worker, scripts, and frontend
+// 1. Validate JS syntax across server, service worker, scripts, backend config, and frontend
 const jsFiles = collectJsFiles(ROOT);
+const backendConfigPath = path.join(ROOT, 'backend', 'config.js');
+if (fs.existsSync(backendConfigPath)) {
+  jsFiles.push(backendConfigPath);
+}
 for (const file of jsFiles) {
   execFileSync(process.execPath, ['--check', file], { stdio: 'inherit' });
 }
