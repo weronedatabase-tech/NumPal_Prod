@@ -291,24 +291,39 @@ function isStandaloneMode() {
 }
 
 function isIOSDevice() {
-  const ua = window.navigator.userAgent.toLowerCase();
-  return /iphone|ipad|ipod/.test(ua);
+  const ua = window.navigator.userAgent || '';
+  const isStandardIOS = /iphone|ipad|ipod/i.test(ua);
+  // iPadOS 13+ reports a desktop Macintosh user agent with multi-touch support
+  const isIPadOSDesktopUA =
+    window.navigator.platform === 'MacIntel' && window.navigator.maxTouchPoints > 1;
+  return isStandardIOS || isIPadOSDesktopUA;
+}
+
+function isIOSChrome() {
+  return /CriOS/i.test(window.navigator.userAgent || '');
 }
 
 function showIOSInstallModal() {
   let modal = document.getElementById('ios-install-modal');
   if (!modal) {
+    const shareIconSvg = `<svg class="ios-share-icon" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg>`;
+    const shareLocation = isIOSChrome()
+      ? 'in the top-right address bar'
+      : 'in Safari\u2019s toolbar';
+
     modal = document.createElement('div');
     modal.id = 'ios-install-modal';
     modal.className = 'pwa-modal-backdrop';
     modal.innerHTML = `
       <div class="pwa-modal-card" role="dialog" aria-modal="true" aria-labelledby="ios-install-title">
-        <h3 id="ios-install-title">Install NumPal</h3>
-        <p>Install NumPal on your home screen for full offline access:</p>
+        <h3 id="ios-install-title">Install NumPal on iPhone / iPad</h3>
+        <p>Add NumPal to your home screen so it launches full-screen and works 100% offline:</p>
         <ol>
-          <li>Tap the <strong>Share</strong> button in Safari.</li>
+          <li>Tap the <strong>Share</strong> button ${shareIconSvg} ${shareLocation}.</li>
           <li>Scroll down and tap <strong>Add to Home Screen</strong>.</li>
+          <li>Tap <strong>Add</strong> in the top-right corner.</li>
         </ol>
+        <p style="font-size: 0.85rem; opacity: 0.7; margin-bottom: 1rem;">Tip: If you don\u2019t see \u201CAdd to Home Screen\u201D, open this link in <strong>Safari</strong> first.</p>
         <button type="button" class="primary-btn" id="ios-install-close">Got it</button>
       </div>
     `;
@@ -324,18 +339,21 @@ function showIOSInstallModal() {
 }
 
 function updateInstallButtonVisibility() {
+  const installWrapper = document.getElementById('pwa-install-wrapper');
   const installBtn = document.getElementById('pwa-install-btn');
   if (!installBtn) return;
 
   if (isStandaloneMode()) {
-    installBtn.style.display = 'none';
+    if (installWrapper) installWrapper.classList.remove('visible');
+    else installBtn.style.display = 'none';
     return;
   }
 
-  if (deferredInstallPrompt || isIOSDevice()) {
-    installBtn.style.display = 'inline-flex';
+  const shouldShow = Boolean(deferredInstallPrompt) || isIOSDevice();
+  if (installWrapper) {
+    installWrapper.classList.toggle('visible', shouldShow);
   } else {
-    installBtn.style.display = 'none';
+    installBtn.style.display = shouldShow ? 'inline-flex' : 'none';
   }
 }
 
@@ -357,16 +375,21 @@ window.addEventListener('appinstalled', () => {
 // Offline Connectivity Indicator & Boot Toasts
 // ==========================================
 function ensureOfflineBanner() {
+  const slot = document.getElementById('offline-pill-slot');
+  if (!slot) return;
+
   let banner = document.getElementById('offline-status-pill');
   if (!banner) {
     banner = document.createElement('div');
     banner.id = 'offline-status-pill';
-    banner.className = 'offline-status-pill';
+    banner.className = 'offline-status-pill inline';
     banner.setAttribute('role', 'status');
     banner.innerHTML = '<span class="offline-dot"></span><span>Offline Mode</span>';
-    document.body.appendChild(banner);
+    slot.appendChild(banner);
   }
-  banner.classList.toggle('visible', !navigator.onLine);
+  const isOffline = !navigator.onLine;
+  banner.classList.toggle('visible', isOffline);
+  slot.classList.toggle('visible', isOffline);
 }
 
 window.addEventListener('online', () => {

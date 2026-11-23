@@ -31,10 +31,6 @@
     <h1>NumPal</h1>
     
     <div class="header-actions">
-        <button id="pwa-install-btn" class="pwa-install-btn" type="button" aria-label="Install App">
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Install
-        </button>
         <a href="index.html" class="header-icon-btn" aria-label="Home">
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
         </a>
@@ -61,7 +57,14 @@
     </a>
 </main>
 
-<footer style="text-align: center; padding: 1rem; color: #888888; font-size: 0.95rem; font-weight: 600; flex-shrink: 0;">
+<div id="pwa-install-wrapper" class="pwa-install-wrapper">
+    <button id="pwa-install-btn" class="pwa-install-btn" type="button" aria-label="Install App">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        <span>Install App</span>
+    </button>
+</div>
+
+<footer style="text-align: center; padding: 0.75rem 1rem 1rem 1rem; color: #888888; font-size: 0.95rem; font-weight: 600; flex-shrink: 0;">
     Developed by Metta School
 </footer>
 

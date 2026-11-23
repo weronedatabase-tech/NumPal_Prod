@@ -35,19 +35,30 @@
           </div>
           
           <div style="width: 100%; flex-shrink: 0;">
-              <button type="button" id="scan-expiry-btn" class="scan-expiry-btn">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
-                  <span style="font-weight: bold; font-size: 1.4rem;">Scan Expiration Date</span>
-              </button>
+              <!-- Prod / Exp: Single Offline Scan Button -->
+              <div id="scan-single-group">
+                  <button type="button" id="scan-expiry-btn" class="scan-expiry-btn">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+                      <span style="font-weight: bold; font-size: 1.4rem;">Scan Expiration Date</span>
+                  </button>
+              </div>
+
+              <!-- Dev: 2 Comparison Scan Buttons (Offline OCR vs Gemini Flash AI) -->
+              <div id="scan-dev-group" class="scan-dev-grid" style="display: none;">
+                  <button type="button" id="scan-offline-btn" class="scan-expiry-btn scan-dev-btn">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+                      <span>Scan Offline</span>
+                  </button>
+                  <button type="button" id="scan-ai-btn" class="scan-expiry-btn scan-ai-btn scan-dev-btn">
+                      <svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3z"></path><path d="M5 3v4"></path><path d="M3 5h4"></path><path d="M19 17v4"></path><path d="M17 19h4"></path></svg>
+                      <span>Scan using AI</span>
+                  </button>
+              </div>
+
               <input type="file" accept="image/*" capture="environment" id="camera-input" style="display:none;">
-              <div class="scan-secondary-row">
-                  <button type="button" id="gallery-upload-btn" class="gallery-link-btn">Choose photo</button>
-                  <span id="ocr-status-text" class="ocr-status-text">Checking offline scanner...</span>
-              </div>
-              <div id="ocr-progress-track" class="ocr-progress-track">
-                  <div id="ocr-progress-fill" class="ocr-progress-fill"></div>
-              </div>
           </div>
+
+          <div id="offline-pill-slot" class="offline-pill-slot"></div>
 
           <hr style="border: 0; border-top: 2px dashed var(--card-border); width: 100%; opacity: 0.5;">
 
@@ -69,7 +80,7 @@
       <div class="camera-stage">
           <video id="camera-video" class="camera-video" autoplay playsinline muted></video>
           <div class="camera-overlay-mask">
-              <div class="camera-guide-hint">Line up the expiry date inside the box</div>
+              <div id="camera-guide-hint" class="camera-guide-hint">Line up the expiry date inside the box</div>
               <div id="camera-guide-box" class="camera-guide-box"></div>
               <div class="camera-guide-tip">Hold steady &amp; keep date clear and bright</div>
           </div>
@@ -96,7 +107,6 @@
       <div id="good-detected-date" class="detected-date-badge" style="display: none;"></div>
       <p>You can eat/use this.</p>
       <button class="obnoxious-btn" onclick="closeOverlay()">OKAY</button>
-      <button id="good-edit-btn" class="obnoxious-secondary-btn" onclick="editDetectedDate()" style="display: none;">Wrong Date? Edit</button>
   </div>
 
   <div id="obnoxious-bad" class="obnoxious-overlay bad" style="display: none;">
@@ -105,7 +115,6 @@
       <div id="bad-detected-date" class="detected-date-badge" style="display: none;"></div>
       <p>DO NOT eat/use this!</p>
       <button class="obnoxious-btn" onclick="closeOverlay()">OKAY</button>
-      <button id="bad-edit-btn" class="obnoxious-secondary-btn" onclick="editDetectedDate()" style="display: none;">Wrong Date? Edit</button>
   </div>
 
   <div id="obnoxious-not-found" class="obnoxious-overlay" style="display: none; background-color: #FF9800; color: white;">

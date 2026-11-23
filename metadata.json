@@ -3,5 +3,8 @@
   "description": "An everyday app for managing time and money to foster independent living.",
   "requestFramePermissions": [
     "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]
 }

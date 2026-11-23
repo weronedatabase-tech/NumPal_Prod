@@ -1,9 +1,15 @@
 // ==========================================
-// expiry.js - Offline Expiry Date Scanner Logic (PaddleOCR PP-OCRv4 via Web Worker)
+// expiry.js - Expiry Date Scanner Logic
+// Offline PaddleOCR PP-OCRv4 (Web Worker) + Dev Comparison with Gemini Flash AI
 // ==========================================
 
+const isDevEnv = typeof ENV !== 'undefined' && ENV === 'Dev';
+
+const scanSingleGroup = document.getElementById('scan-single-group');
+const scanDevGroup = document.getElementById('scan-dev-group');
 const scanExpiryBtn = document.getElementById('scan-expiry-btn');
-const galleryUploadBtn = document.getElementById('gallery-upload-btn');
+const scanOfflineBtn = document.getElementById('scan-offline-btn');
+const scanAiBtn = document.getElementById('scan-ai-btn');
 const cameraInput = document.getElementById('camera-input');
 const manualCheckBtn = document.getElementById('manual-check-btn');
 const manualDateDisplay = document.getElementById('manual-date-display');
@@ -15,15 +21,11 @@ const badOverlay = document.getElementById('obnoxious-bad');
 const notFoundOverlay = document.getElementById('obnoxious-not-found');
 const goodDetectedDateEl = document.getElementById('good-detected-date');
 const badDetectedDateEl = document.getElementById('bad-detected-date');
-const goodEditBtn = document.getElementById('good-edit-btn');
-const badEditBtn = document.getElementById('bad-edit-btn');
-const ocrStatusText = document.getElementById('ocr-status-text');
-const ocrProgressTrack = document.getElementById('ocr-progress-track');
-const ocrProgressFill = document.getElementById('ocr-progress-fill');
 
 // Camera modal elements
 const cameraModal = document.getElementById('camera-modal');
 const cameraVideo = document.getElementById('camera-video');
+const cameraGuideHint = document.getElementById('camera-guide-hint');
 const cameraGuideBox = document.getElementById('camera-guide-box');
 const cameraCloseBtn = document.getElementById('camera-close-btn');
 const cameraCaptureBtn = document.getElementById('camera-capture-btn');
@@ -37,7 +39,7 @@ const monthYearOptions = { month: 'long', year: 'numeric' };
 document.getElementById('today-date-display').innerText = today.toLocaleDateString('en-GB', options);
 
 let selectedManualDate = null;
-let lastScannedDate = null;
+let activeScanMode = 'offline'; // 'offline' | 'ai'
 
 // Worker & camera state
 let ocrWorker = null;
@@ -49,24 +51,26 @@ const pendingRequests = new Map();
 let activeStream = null;
 let torchOn = false;
 
+// Apply environment-specific scan controls (Dev shows 2 buttons: Scan Offline & Scan using AI)
+(function applyEnvironmentScanUI() {
+  if (isDevEnv) {
+    if (scanSingleGroup) scanSingleGroup.style.display = 'none';
+    if (scanDevGroup) scanDevGroup.style.display = 'grid';
+  } else {
+    if (scanSingleGroup) scanSingleGroup.style.display = 'block';
+    if (scanDevGroup) scanDevGroup.style.display = 'none';
+  }
+})();
+
 function getDaysInMonth(month, year) {
   return new Date(year, month, 0).getDate();
 }
 
-function setStatusUI(text, isReady = false, progressPercent = null) {
-  if (ocrStatusText) {
-    ocrStatusText.textContent = text;
-    ocrStatusText.classList.toggle('ready', isReady);
-  }
-  if (ocrProgressTrack && ocrProgressFill) {
-    if (typeof progressPercent === 'number' && progressPercent > 0 && progressPercent < 100) {
-      ocrProgressTrack.style.display = 'block';
-      ocrProgressFill.style.width = `${progressPercent}%`;
-    } else {
-      ocrProgressTrack.style.display = 'none';
-      ocrProgressFill.style.width = '0%';
-    }
-  }
+function formatLocalIsoDate(dateObj) {
+  const y = dateObj.getFullYear();
+  const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const d = String(dateObj.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 function setProcessingUI(visible, title = 'Reading date...', subtitle = '') {
@@ -108,20 +112,14 @@ function ensureWorker() {
 
     if (msg.type === 'progress') {
       const pct = msg.percent;
-      if (pct >= 100) {
-        setStatusUI('Ready Offline ✓', true, 100);
-      } else {
-        setStatusUI(`${msg.status || 'Preparing offline scanner...'} ${pct}%`, false, pct);
-        if (processingScreen.style.display === 'flex' && processingSubtitle) {
-          processingSubtitle.textContent = `${msg.status || 'Preparing offline scanner...'} (${pct}%)`;
-        }
+      if (pct < 100 && processingScreen.style.display === 'flex' && activeScanMode === 'offline' && processingSubtitle) {
+        processingSubtitle.textContent = `${msg.status || 'Preparing offline scanner...'} (${pct}%)`;
       }
       return;
     }
 
     if (msg.type === 'ready') {
       ocrReady = true;
-      setStatusUI('Ready Offline ✓', true, 100);
       if (ocrReadyPromise && ocrReadyPromise.resolve) {
         ocrReadyPromise.resolve();
       }
@@ -205,24 +203,15 @@ function runWorkerPass(rgbaUint8Clamped, width, height, mode, isCroppedStrip) {
 // Pre-warm offline scanner on page load
 (async function bootstrapOfflineOcr() {
   const cached = await areModelsCached();
-  if (cached) {
-    setStatusUI('Ready Offline ✓', true);
+  if (cached || navigator.onLine) {
     // Warm up sessions in background so the first scan is fast
     initOfflineOcr().catch(() => {});
-  } else if (navigator.onLine) {
-    setStatusUI('Preparing offline scanner...', false, 5);
-    initOfflineOcr().catch(() => {
-      setStatusUI('Tap Scan to prepare offline scanner', false);
-    });
-  } else {
-    setStatusUI('Connect once to save offline scanner', false);
   }
 })();
 
-// Update status immediately if the Service Worker finishes background OCR warming
+// Warm up sessions if the Service Worker finishes background OCR caching
 window.addEventListener('numpal:ocr-cache-ready', async () => {
   if (!ocrReady && await areModelsCached()) {
-    setStatusUI('Ready Offline ✓', true);
     initOfflineOcr().catch(() => {});
   }
 });
@@ -284,16 +273,7 @@ window.openDatePicker = function () {
   );
 };
 
-window.editDetectedDate = function () {
-  if (lastScannedDate) {
-    selectedManualDate = new Date(lastScannedDate);
-    manualDateDisplay.innerText = selectedManualDate.toLocaleDateString('en-GB', options);
-  }
-  window.closeOverlay();
-  window.openDatePicker();
-};
-
-function showResultOverlay(isExpired, dateObj, isFromScan, isMonthOnly = false) {
+function showResultOverlay(isExpired, dateObj, isMonthOnly = false) {
   const formatted = dateObj
     ? isMonthOnly
       ? `End of ${dateObj.toLocaleDateString('en-GB', monthYearOptions)}`
@@ -305,14 +285,12 @@ function showResultOverlay(isExpired, dateObj, isFromScan, isMonthOnly = false) 
       badDetectedDateEl.textContent = formatted ? `Date read: ${formatted}` : '';
       badDetectedDateEl.style.display = formatted ? 'block' : 'none';
     }
-    if (badEditBtn) badEditBtn.style.display = isFromScan ? 'block' : 'none';
     badOverlay.style.display = 'flex';
   } else {
     if (goodDetectedDateEl) {
       goodDetectedDateEl.textContent = formatted ? `Date read: ${formatted}` : '';
       goodDetectedDateEl.style.display = formatted ? 'block' : 'none';
     }
-    if (goodEditBtn) goodEditBtn.style.display = isFromScan ? 'block' : 'none';
     goodOverlay.style.display = 'flex';
   }
 }
@@ -331,13 +309,25 @@ manualCheckBtn.addEventListener('click', () => {
     const compareToday = new Date(today);
     compareToday.setHours(0, 0, 0, 0);
 
-    showResultOverlay(checkDate < compareToday, checkDate, false, false);
+    showResultOverlay(checkDate < compareToday, checkDate, false);
   }, 400);
 });
 
 // ==========================================
 // Guided Live Camera Viewfinder + File Fallback
 // ==========================================
+function updateViewfinderModeUI(mode) {
+  const isAi = mode === 'ai';
+  if (cameraGuideHint) {
+    cameraGuideHint.textContent = isAi
+      ? 'AI Scan: Line up the expiry date inside the box'
+      : 'Line up the expiry date inside the box';
+  }
+  if (cameraCaptureBtn) {
+    cameraCaptureBtn.classList.toggle('ai-mode', isAi);
+  }
+}
+
 function stopCamera() {
   if (activeStream) {
     activeStream.getTracks().forEach(t => t.stop());
@@ -361,16 +351,25 @@ function stopCamera() {
   }
 }
 
-async function openCameraViewfinder() {
-  // Check if offline & models not yet downloaded
-  const cached = await areModelsCached();
-  if (!cached && !navigator.onLine) {
-    showToast('Connect once to download the offline scanner (~15 MB), or key in the date below.', true);
-    return;
-  }
+async function openCameraViewfinder(mode = 'offline') {
+  activeScanMode = mode === 'ai' ? 'ai' : 'offline';
+  updateViewfinderModeUI(activeScanMode);
 
-  // Start warming up OCR engine while user aims camera
-  initOfflineOcr().catch(() => {});
+  if (activeScanMode === 'ai') {
+    if (!navigator.onLine) {
+      showToast('AI scan requires an internet connection. Use Scan Offline instead.', true);
+      return;
+    }
+  } else {
+    // Check if offline & models not yet downloaded
+    const cached = await areModelsCached();
+    if (!cached && !navigator.onLine) {
+      showToast('Connect once to download the offline scanner (~15 MB), or key in the date below.', true);
+      return;
+    }
+    // Start warming up OCR engine while user aims camera
+    initOfflineOcr().catch(() => {});
+  }
 
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     cameraInput.click();
@@ -433,16 +432,17 @@ function captureFromViewfinder() {
   let sw = gr.width / scale;
   let sh = gr.height / scale;
 
-  // Add a forgiving 14% padding around the guide box so edge digits are never cut off
-  const padX = sw * 0.14;
-  const padY = sh * 0.22;
+  // Give AI mode slightly wider padding so nearby EXP / BEST BEFORE labels stay in frame
+  const isAi = activeScanMode === 'ai';
+  const padX = sw * (isAi ? 0.24 : 0.14);
+  const padY = sh * (isAi ? 0.35 : 0.22);
   sx = Math.max(0, sx - padX);
   sy = Math.max(0, sy - padY);
   sw = Math.min(vw - sx, sw + padX * 2);
   sh = Math.min(vh - sy, sh + padY * 2);
 
-  // Scale captured crop cleanly (max width 960px for crisp OCR + fast WASM execution)
-  const MAX_WIDTH = 960;
+  // Scale captured crop cleanly
+  const MAX_WIDTH = isAi ? 1280 : 960;
   const outScale = sw > MAX_WIDTH ? MAX_WIDTH / sw : 1;
   const outW = Math.max(32, Math.round(sw * outScale));
   const outH = Math.max(32, Math.round(sh * outScale));
@@ -450,14 +450,24 @@ function captureFromViewfinder() {
   const canvas = document.createElement('canvas');
   canvas.width = outW;
   canvas.height = outH;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const ctx = canvas.getContext('2d', { willReadFrequently: !isAi });
   ctx.drawImage(cameraVideo, sx, sy, sw, sh, 0, 0, outW, outH);
-  const imageData = ctx.getImageData(0, 0, outW, outH);
 
-  stopCamera();
-  processImagePixels(imageData.data, outW, outH, true);
+  if (isAi) {
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+    const base64 = dataUrl.split(',')[1];
+    stopCamera();
+    processImageWithAI(base64, 'image/jpeg');
+  } else {
+    const imageData = ctx.getImageData(0, 0, outW, outH);
+    stopCamera();
+    processImagePixels(imageData.data, outW, outH, true);
+  }
 }
 
+// ==========================================
+// Scanner 1: Offline PaddleOCR Processing
+// ==========================================
 async function processImagePixels(rgbaData, width, height, isCroppedStrip) {
   if (typeof window.numpalSetBusy === 'function') window.numpalSetBusy(true);
   setProcessingUI(true, 'Reading date...', ocrReady ? 'Scanning image offline...' : 'Loading offline OCR engine...');
@@ -466,7 +476,7 @@ async function processImagePixels(rgbaData, width, height, isCroppedStrip) {
     await initOfflineOcr();
 
     // Pass 1: Standard PaddleOCR PP-OCRv4 detection + recognition
-    setProcessingUI(true, 'Reading date...', 'Detecting text...');
+    setProcessingUI(true, 'Reading date...', 'Detecting text offline...');
     const pass1Detections = await runWorkerPass(rgbaData, width, height, 'standard', isCroppedStrip);
     let parsed = window.ExpiryDateParser.parse(pass1Detections, today);
 
@@ -483,10 +493,9 @@ async function processImagePixels(rgbaData, width, height, isCroppedStrip) {
     setProcessingUI(false);
 
     if (parsed.foundDate) {
-      lastScannedDate = new Date(parsed.date);
       selectedManualDate = new Date(parsed.date);
       manualDateDisplay.innerText = selectedManualDate.toLocaleDateString('en-GB', options);
-      showResultOverlay(parsed.isExpired, parsed.date, true, parsed.isMonthOnly);
+      showResultOverlay(parsed.isExpired, parsed.date, parsed.isMonthOnly);
     } else {
       notFoundOverlay.style.display = 'flex';
     }
@@ -503,6 +512,64 @@ async function processImagePixels(rgbaData, width, height, isCroppedStrip) {
   }
 }
 
+// ==========================================
+// Scanner 2: Gemini Flash AI Processing (Dev Mode)
+// ==========================================
+async function processImageWithAI(imageBase64, mimeType) {
+  if (!navigator.onLine) {
+    showToast('AI scan requires an internet connection. Use Scan Offline instead.', true);
+    return;
+  }
+
+  if (typeof window.numpalSetBusy === 'function') window.numpalSetBusy(true);
+  setProcessingUI(true, 'Reading date...', 'Scanning with Gemini Flash AI...');
+
+  try {
+    const response = await fetch('/api/scan-expiry', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        imageBase64,
+        mimeType: mimeType || 'image/jpeg',
+        todayIso: formatLocalIsoDate(today)
+      })
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(data.error || `AI scan failed (${response.status})`);
+    }
+
+    setProcessingUI(false);
+
+    if (data.foundDate && data.year && data.month && data.day) {
+      const detectedDate = new Date(data.year, data.month - 1, data.day);
+      detectedDate.setHours(0, 0, 0, 0);
+
+      const compareToday = new Date(today);
+      compareToday.setHours(0, 0, 0, 0);
+
+      selectedManualDate = new Date(detectedDate);
+      manualDateDisplay.innerText = selectedManualDate.toLocaleDateString('en-GB', options);
+      showResultOverlay(detectedDate < compareToday, detectedDate, Boolean(data.isMonthOnly));
+    } else {
+      notFoundOverlay.style.display = 'flex';
+    }
+  } catch (err) {
+    console.error('Gemini Flash AI Scan Error:', err);
+    setProcessingUI(false);
+    showToast(err.message || 'AI scan failed. Please try again or use Scan Offline.', true);
+  } finally {
+    if (typeof window.numpalSetBusy === 'function') window.numpalSetBusy(false);
+  }
+}
+
+// ==========================================
+// Image File Loaders
+// ==========================================
 function loadFileToRGBA(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -532,17 +599,47 @@ function loadFileToRGBA(file) {
   });
 }
 
-// Event bindings
-scanExpiryBtn.addEventListener('click', openCameraViewfinder);
+function loadFileToJpegBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX_SIDE = 1280;
+        let scale = 1;
+        if (Math.max(img.width, img.height) > MAX_SIDE) {
+          scale = MAX_SIDE / Math.max(img.width, img.height);
+        }
+        const w = Math.max(32, Math.round(img.width * scale));
+        const h = Math.max(32, Math.round(img.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, w, h);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        resolve({ base64: dataUrl.split(',')[1], mimeType: 'image/jpeg' });
+      };
+      img.onerror = () => reject(new Error('Invalid image file'));
+      img.src = event.target.result;
+    };
+    reader.onerror = () => reject(new Error('Failed to read image file'));
+    reader.readAsDataURL(file);
+  });
+}
 
-galleryUploadBtn.addEventListener('click', async () => {
-  const cached = await areModelsCached();
-  if (!cached && !navigator.onLine) {
-    showToast('Connect once to download the offline scanner (~15 MB), or key in the date below.', true);
-    return;
-  }
-  cameraInput.click();
-});
+// ==========================================
+// Event Bindings
+// ==========================================
+if (scanExpiryBtn) {
+  scanExpiryBtn.addEventListener('click', () => openCameraViewfinder('offline'));
+}
+if (scanOfflineBtn) {
+  scanOfflineBtn.addEventListener('click', () => openCameraViewfinder('offline'));
+}
+if (scanAiBtn) {
+  scanAiBtn.addEventListener('click', () => openCameraViewfinder('ai'));
+}
 
 cameraCloseBtn.addEventListener('click', stopCamera);
 cameraCaptureBtn.addEventListener('click', captureFromViewfinder);
@@ -569,8 +666,13 @@ cameraInput.addEventListener('change', async (e) => {
   if (!e.target.files || e.target.files.length === 0) return;
   const file = e.target.files[0];
   try {
-    const { data, width, height } = await loadFileToRGBA(file);
-    await processImagePixels(data, width, height, false);
+    if (activeScanMode === 'ai') {
+      const { base64, mimeType } = await loadFileToJpegBase64(file);
+      await processImageWithAI(base64, mimeType);
+    } else {
+      const { data, width, height } = await loadFileToRGBA(file);
+      await processImagePixels(data, width, height, false);
+    }
   } catch (_err) {
     showToast('Could not open image. Please try again.', true);
   } finally {

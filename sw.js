@@ -1,4 +1,4 @@
-const CACHE_NAME = 'numpal-cache-v108';
+const CACHE_NAME = 'numpal-cache-v111';
 const OCR_MODEL_CACHE = 'numpal-ocr-models-v1';
 
 // Tier 1A: Lightweight HTML, CSS, JS, and metadata files.
@@ -409,6 +409,7 @@ self.addEventListener('fetch', event => {
   if (requestUrl.origin !== self.location.origin) return;
 
   const pathname = requestUrl.pathname;
+  if (pathname.startsWith('/api/')) return;
   const cleanUrl = getCleanCacheUrl(event.request.url);
 
   // 1. version.json: Always try network no-store first, fall back to cache when offline
