@@ -1,4 +1,4 @@
-const CACHE_NAME = 'numpal-cache-v114';
+const CACHE_NAME = 'numpal-cache-v116';
 const OCR_MODEL_CACHE = 'numpal-ocr-models-v1';
 
 // Tier 1A: Lightweight HTML, CSS, JS, and metadata files.
@@ -11,6 +11,7 @@ const CORE_CODE_URLS = [
   './backend/config.js',
   './frontend/js/core/app.js',
   './frontend/js/utils/ui.js',
+  './frontend/js/utils/admin-models.js',
   './frontend/js/utils/rolodex.js',
   './frontend/js/utils/date-parser.js',
   './frontend/js/workers/ocr.worker.js',

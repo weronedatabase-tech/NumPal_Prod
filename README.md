@@ -54,7 +54,8 @@ Future commits to the `main` branch that modify files in the `backend/` director
 
 **Part 4: Configure Paid-Tier Gemini API Key in Google Apps Script (for GitHub Pages AI Scan)**
 1. Open your Google Apps Script project > **Project Settings** (gear icon) > **Script Properties** > **Add script property**.
-2. Add property `GEMINI_API_KEY` with your billing-enabled (Pay-as-you-go) Gemini API key to lift free-tier daily limits.
-3. *(Optional)* Add `GEMINI_FLASH_MODEL` (default: `gemini-4-hydrogen`) or `GEMINI_FALLBACK_MODEL` (default: `gemini-3.1-flash-lite`) to customize models.
-4. In the Apps Script editor, run `doGet` once (or re-authorize your Web App deployment) if prompted to grant external URL fetch permission (`UrlFetchApp`).
-5. Verify by opening your Apps Script `/exec` URL in a browser — it should return `{"ok":true,...,"configured":true}`.
+2. Add property `GEMINI_API_KEY` with your Gemini API key.
+3. Add property `AI_Model_Change` with your admin password for the hidden AI Model Selection screen (long-press the Metta School logo on the home page for 3 seconds).
+4. *(Optional)* Add `GEMINI_FLASH_MODEL` (default: `gemini-4-hydrogen`) or `GEMINI_FALLBACK_MODEL` (default: `gemini-3.1-flash-lite`) to customize models directly, or update them in-app via the hidden admin menu.
+5. In the Apps Script editor, run `doGet` once (or re-authorize your Web App deployment) if prompted to grant external URL fetch permission (`UrlFetchApp`).
+6. Verify by opening your Apps Script `/exec` URL in a browser — it should return `{"ok":true,...,"configured":true,"adminConfigured":true}`.

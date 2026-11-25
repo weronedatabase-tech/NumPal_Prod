@@ -519,11 +519,6 @@ function getConfiguredGasApiUrl() {
   return /^https:\/\/.+/i.test(trimmed) ? trimmed : '';
 }
 
-function isStaticFrontendHost() {
-  const host = (window.location.hostname || '').toLowerCase();
-  return host.endsWith('.github.io') || window.location.protocol === 'file:';
-}
-
 async function postToGasBackend(gasUrl, payload) {
   // Use text/plain to send a CORS simple request so Google Apps Script does not fail on OPTIONS preflight
   const response = await fetch(gasUrl, {
@@ -550,31 +545,10 @@ async function postToGasBackend(gasUrl, payload) {
 
 async function requestAiExpiryScan(payload) {
   const gasUrl = getConfiguredGasApiUrl();
-
-  // GitHub Pages & static hosts cannot serve POST /api/scan-expiry (returns HTTP 405) -> call Apps Script directly
-  if (isStaticFrontendHost()) {
-    if (!gasUrl) {
-      throw new Error('AI scan backend URL is not configured in config.js.');
-    }
-    return postToGasBackend(gasUrl, payload);
+  if (!gasUrl) {
+    throw new Error('AI scan backend URL is not configured in config.js.');
   }
-
-  // Node.js / AI Studio server -> call local /api/scan-expiry first
-  const localResponse = await fetch('/api/scan-expiry', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  });
-
-  // Fallback for custom-domain static hosting (e.g. GitHub Pages custom domain) that returns 405/404 for POST /api/*
-  if ((localResponse.status === 405 || localResponse.status === 404) && gasUrl) {
-    return postToGasBackend(gasUrl, payload);
-  }
-
-  const data = await localResponse.json().catch(() => ({}));
-  return { response: localResponse, data };
+  return postToGasBackend(gasUrl, payload);
 }
 
 async function processImageWithAI(imageBase64, mimeType) {
